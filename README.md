@@ -1,86 +1,84 @@
-# XDDD APT repository builder
+# XDDD APT archive builder
 
-Generate a **test-signed** Debian APT archive from approved releases in
+Build a **test-signed**, static Debian APT repository from approved releases of
 [`mwyau/netavark-backports`](https://github.com/mwyau/netavark-backports).
-This project does **not** publish any website or packages yet.
+This repository **does not deploy an APT website** or publish packages to a public mirror.
 
-## First-stage workflow
+## Build
 
-[Build signed APT archive](.github/workflows/build.yml) runs on PRs and on
-`main`, building **both** the synthetic fixture and the real approved release archive in separate matrix jobs. Manual dispatch runs both modes as well:
+The [Build signed APT archive workflow](.github/workflows/build.yml) runs on pull
+requests, pushes to `main`, and manual dispatch. It:
 
-- **`fixture`**: creates 12 **non-functional** `xddd-apt-test-fixture`
-  packages: two versions for three Debian suites and two architectures. No
-  downloads or approved release required. Never install these as Netavark.
-- **`releases`**: enumerates all published, non-draft, non-prerelease
-  `netavark-YYYYMMDD.N` GitHub Releases; reads `versions.json` and
-  `SHA256SUMS` from each; verifies hashes; selects only Debian Trixie,
-  Forky and Sid AMD64/ARM64 `.deb` packages. It retains every distinct
-  historical version and fails if no approved releases exist. Existing
-  `ci-*` draft releases are **not** accepted.
+1. Lists all published, non-draft, non-prerelease `netavark-YYYYMMDD.N` releases.
+   Draft `ci-*` releases are never eligible.
+2. Downloads the release manifests and checksum lists, verifies their consistency,
+   and selects only Debian Trixie, Forky and Sid `netavark` binaries for
+   `amd64` and `arm64`.
+3. Checks historical package checksums against `archive-lock.json`, rejects
+   conflicting or disappearing packages, and retains every approved version
+   for later downgrades.
+4. Uses **aptly** to generate the complete `dists/` and `pool/` tree,
+   signed `InRelease`, `Release`, `Release.gpg`, architecture package indexes
+   and by-hash index files.
+5. Verifies index entries, binary checksums, signatures and repository priority
+   fields; runs `apt-get update` separately against Trixie, Forky and Sid.
+6. Uploads `apt-site.tar.gz`, `apt-site.tar.gz.sha256` and the candidate
+   updated checksum lock as a GitHub Actions artifact called `apt-site`.
 
-The output is a `apt-site.tar.gz` GitHub Actions artifact containing `dists/`,
-`pool/`, a public keyring and an HTML warning. Every suite gets signed `Release`,
-`Release.gpg`, `InRelease`, architecture indexes, and by-hash indexes generated
-by **aptly**. The workflow validates package hashes and signatures and runs a
-real `apt-get update` against the local file-based archive before uploading it.
-No Cloudflare setup, persistent database, persistent GPG key, or deployment
-credential is needed.
+The latest approved release is discovered automatically. The initial source
+release is [`netavark-20261029.1`](https://github.com/mwyau/netavark-backports/releases/tag/netavark-20261029.1),
+with six Debian binaries (three distributions and two architectures).
 
-## Temporary signing key
+## Signing: test use only
 
-Each run generates a new Ed25519 test-only OpenPGP signing key expiring in 14
-days. It is created inside an isolated temporary `GNUPGHOME`, and its private
-material is deleted before output is archived. **Do not trust, publish, or
-install from this archive in production.** The `xddd-archive-keyring.gpg` inside
-the output is a *public* key only. In particular, it must not be deployed to
-`apt.xddd.org` or distributed as a permanent trust anchor.
+A fresh Ed25519 OpenPGP signing key is generated **inside each CI run** and expires
+after 14 days. Its private material remains in a temporary GnuPG directory,
+is removed before the archive is uploaded, and is never committed, attached,
+or displayed. Only the corresponding **public** key is included in the output.
 
-## Historical packages and edit protection
+**Do not install packages from the generated archive on production systems.**
+The test signing key is not a stable trust anchor. Before publishing the archive
+to `apt.xddd.org`, replace it with a separately protected production APT
+signing subkey and complete a deployment review.
 
-The release collector checks all published historical release snapshots,
-including the binaries carried forward by Netavark's release pipeline, and
-eliminates duplicate `(package filename, SHA256)` combinations. If a repeated
-filename has different bytes, the build fails. If a previously approved
-package has its checksum recorded in `archive-lock.json`, the build fails if
-that package changes **or disappears**.
+## Historical packages and checksum lock
 
-The six Debian binaries from the first approved release
-[`netavark-20261029.1`](https://github.com/mwyau/netavark-backports/releases/tag/netavark-20261029.1)
-are already recorded in `archive-lock.json`. These SHA-256 values remain a
-reviewed source of truth independent of editable GitHub Releases.
+The first release's six Debian SHA-256 digests are recorded in
+[`archive-lock.json`](archive-lock.json). The lock is independent of editable
+GitHub Releases. If a previously approved package's bytes change, or a locked
+version disappears from release history, the build stops.
 
-When later releases add binaries, review the produced
-`archive-lock.candidate.json` and update `archive-lock.json` in a PR.
-**This workflow never updates its lock automatically.**
+When a new approved release adds packages, the build writes
+`archive-lock.candidate.json` to its Actions artifact. Review and commit the
+updated hashes in a separate PR. This repository never silently changes the
+committed lock.
 
-The source Release artifact's snapshot filenames are derived from its
-`versions.json`. GitHub replaces the `~` in Debian binary release asset
-filenames with `.`; this is *only* a download filename change, not a Debian
-package version change. The collector checks the original canonical name in
-`SHA256SUMS` and restores the canonical `~suite` filename locally.
-Do not change the package `Version` field to work around GitHub filenames. Only `.deb` binaries are published: source packages stay in
-upstream GitHub Releases. The backports project controls which releases are
-approved; this repository never promotes drafts or substitutes synthetic
-packages into `releases` mode.
+GitHub Release storage may replace the `~` in `.deb` **asset filenames** with
+`.`. The collector maps those names back to their checksummed canonical
+filenames while preserving the `~trixie`, `~forky`, and `~sid` **Debian package
+versions**. Ubuntu, RPM and source artifacts are excluded from this APT archive.
 
 ## Local development
 
-Requires `python3`, `dpkg-deb`, `aptly`, `gpg`, `gpgv`, and `apt-get`.
+Requirements: Python 3, `aptly`, `gnupg`, `gpgv`, `dpkg-dev` and `apt-get`.
 
-```sh
+```bash
 python3 -m unittest discover -s tests -v
-python3 scripts/fixture.py --output .artifacts/packages
+python3 scripts/collect.py \
+  --output .artifacts/packages \
+  --lock archive-lock.json \
+  --candidate-lock .artifacts/archive-lock.candidate.json
 bash scripts/build.sh .artifacts/packages .artifacts/site
-python3 scripts/verify.py --site .artifacts/site --mode fixture
+python3 scripts/verify.py --site .artifacts/site
 ```
 
-`aptly` owns the Debian archive format and checksums. No handcrafted `Packages`
-or `Release` indexes are used. The generated site is **not** committed to Git.
+To access a GitHub API token when needed for rate limits, set `GH_TOKEN` in
+the environment. Only published public release files are downloaded, and
+credentials are not forwarded to their download URLs.
 
-## Planned deployment (out of scope)
+## Later deployment (not implemented)
 
-When planning the later production deployment, replace the ephemeral test signer with a protected production signing
-subkey, implement a fully reviewed archive lock, and add a separately approved
-Cloudflare Pages deployment. `apt.xddd.org` remains a proposed hostname, not
-a configured domain.
+The intended hostname is `apt.xddd.org`. A later phase will configure a
+production signing key, review publication security and optionally deploy
+the generated tree to Cloudflare Pages Free. No Cloudflare project or secrets
+are required for this initial build.
