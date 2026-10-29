@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -139,6 +140,21 @@ def validated_release(release: dict, token: str) -> tuple[dict, dict, dict]:
     return expected, normalized, checksums
 
 
+def verify_deb_control(path: Path, suite: str, arch: str, version: str) -> None:
+    """Check the signed asset's actual Debian control fields, not just its name."""
+    try:
+        values = subprocess.check_output(
+            ['dpkg-deb', '--field', str(path), 'Package', 'Version', 'Architecture'],
+            text=True, stderr=subprocess.PIPE,
+        ).splitlines()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CollectionError(f'Invalid Debian package: {path.name}') from exc
+    if values != ['netavark', version, arch]:
+        raise CollectionError(
+            f'Control metadata mismatch for {suite}/{path.name}: '
+            f'expected (netavark, {version}, {arch}), found {values!r}')
+
+
 def load_lock(path: Path) -> dict[str, str]:
     data = json.loads(path.read_text())
     if data.get('schema') != 1 or not isinstance(data.get('packages'), dict):
@@ -177,7 +193,9 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
                 raise CollectionError(f'Package SHA256 mismatch: {name}')
             folder = destination / suite
             folder.mkdir(exist_ok=True)
-            (folder / name).write_bytes(contents)
+            destination_file = folder / name
+            destination_file.write_bytes(contents)
+            verify_deb_control(destination_file, suite, arch, version)
             observed[name] = digest
             provenance[name] = [release['tag_name']]
     missing = set(lock) - set(observed)
