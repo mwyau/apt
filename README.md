@@ -50,8 +50,9 @@ signing subkey and complete a deployment review.
 
 The first release's six Debian SHA-256 digests are recorded in
 [`archive/package-lock.json`](archive/package-lock.json). The lock is independent of editable
-GitHub Releases. If a previously approved package's bytes change, or a locked
-version disappears from release history, the build stops.
+GitHub Releases. If a selected upstream package's bytes differ from the reviewed lock,
+the **build** stops; discovery instead proposes the newer dated source for
+explicit review. Missing locked versions also stop the build.
 
 A separate [daily discovery workflow](.github/workflows/discover.yml) runs at
 08:17 UTC and can also be dispatched manually. It reads `archive/sources.json`,
@@ -73,6 +74,32 @@ GitHub Release storage may replace the `~` in `.deb` **asset filenames** with
 `.`. The collector maps those names back to their checksummed canonical
 filenames while preserving the `~trixie`, `~forky`, and `~sid` **Debian package
 versions**. Ubuntu, RPM and source artifacts are excluded from this APT archive.
+
+## Repeated filenames in dated upstream releases
+
+Upstream snapshots are processed in ascending `netavark-YYYYMMDD.N` order,
+comparing the date and numeric run revision rather than string sorting.
+When the same canonical Debian filename appears in several releases:
+
+- **Same SHA-256:** it is one unchanged binary, with the latest dated release
+  recorded as its current source.
+- **Different SHA-256:** discovery selects the newest dated release's bytes
+  as a **proposal** and opens a review PR that highlights the previous hash,
+  proposed hash, release tag, and hash history. It never silently overwrites
+  `archive/package-lock.json`.
+- **Locked production build:** it fails if the latest selected bytes differ
+  from the already reviewed hash. A review-and-merge is required before
+  those bytes can enter a new archive.
+- **Intentionally removed version:** remains excluded regardless of newer
+  upstream snapshots with that filename.
+
+For Debian, **rebuilding different bytes under the exact same package
+version is discouraged**: systems may have cached the old binary or already
+installed it. Prefer publishing a bumped package version (e.g. `xddd2`)
+rather than replacing `xddd1`.
+
+When **different source repositories** provide the same canonical filename,
+discovery still fails closed rather than silently choosing one repository.
 
 ## Remove or recover a published version
 
