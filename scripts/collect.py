@@ -197,12 +197,10 @@ def resolve_lock(discovered: dict[str, str], active: dict[str, str],
     if require_locked:
         ensure_locked_subset(discovered, active)
     proposed = dict(active)
-    changes = {}
     for name, sha in discovered.items():
         if name in removed:
             continue
         if name in active and active[name] != sha:
-            changes[name] = (active[name], sha)
             if not require_locked:
                 proposed[name] = sha
         elif name not in active:
@@ -251,6 +249,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str],
             if name in observed and observed[name] == digest:
                 provenance[name].append(tag)
                 selected_tags[name] = tag
+                upload_dates[name] = assets[name].get('created_at')
                 continue
             # The same filename can be carried forward with modified bytes.
             # Process releases oldest-to-newest: the newest dated tag wins as
@@ -346,11 +345,11 @@ def collect_sources(repositories: list[str], destination: Path,
                 ]
             for release in candidate['release_metadata']:
                 all_releases.append({'repository': repo, **release})
-    for name, expected_sha in lock.items():
-        if name not in all_packages:
-            raise CollectionError(f'Previously locked package disappeared: {name}')
-        if all_packages[name] != expected_sha:
-            raise CollectionError(f'Historical artifact changed since archive lock: {name}')
+    missing = sorted(set(lock) - set(all_packages))
+    if missing:
+        raise CollectionError(f'Previously locked packages disappeared: {missing}')
+    # Hash changes are surfaced as review proposals. The --require-locked build
+    # separately refuses all hash changes until the proposed lock PR is merged.
     return {'schema': 1, 'packages': dict(sorted(all_packages.items())),
             'release_metadata': all_releases, 'provenance': all_provenance,
             'selected_sources': selected_sources, 'hash_history': all_hash_history,
@@ -413,6 +412,18 @@ def main() -> None:
             },
         }
         args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+        details_path = args.candidate_lock.with_name('package-discovery.json')
+        details_path.write_text(json.dumps({
+            'schema': 1,
+            'packages': {
+                name: {
+                    'sha256': sha,
+                    'selected_release': candidate['selected_sources'][name],
+                    'hash_history': candidate['hash_history'][name],
+                }
+                for name, sha in candidate['packages'].items()
+            },
+        }, indent=2, sort_keys=True) + '\n')
         print(f'Collected {len(active)} enabled Debian packages '
               f'from {len(candidate["release_metadata"])} source releases')
     except (CollectionError, ValueError, KeyError, OSError, TypeError) as exc:
