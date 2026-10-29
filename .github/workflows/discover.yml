@@ -48,7 +48,17 @@ jobs:
           candidate=".artifacts/package-lock.candidate.json"
           current="archive/package-lock.json"
 
-          if cmp -s "$current" "$candidate"; then
+          # Compare parsed JSON, not formatting or key order. This is crucial
+          # when package-lock.json has been manually edited to disable a version.
+          if python3 - "$current" "$candidate" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          previous = json.loads(Path(sys.argv[1]).read_text())
+          proposed = json.loads(Path(sys.argv[2]).read_text())
+          sys.exit(0 if previous == proposed else 1)
+          PY
+          then
             echo "No new package hashes to approve."
             exit 0
           fi
