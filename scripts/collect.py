@@ -226,8 +226,7 @@ def release_order(tag: str) -> tuple[int, int]:
     return int(day), int(revision)
 
 
-def collect(releases: list[dict], destination: Path, lock: dict[str, str],
-            token: str, repo: str) -> dict:
+def collect(releases: list[dict], destination: Path, token: str, repo: str) -> dict:
     approved = sorted((r for r in releases if TAG.fullmatch(r.get('tag_name', ''))
                        and not r.get('draft') and not r.get('prerelease')),
                       key=lambda r: release_order(r['tag_name']))
@@ -271,7 +270,6 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str],
             provenance[name] = [tag]
             selected_tags[name] = tag
             upload_dates[name] = item.get('created_at')
-    ensure_locked_subset(observed, lock)
     return {'schema': 1, 'repository': repo, 'packages': dict(sorted(observed.items())),
             'releases': [r['tag_name'] for r in approved],
             'provenance': provenance, 'uploaded_at': upload_dates,
@@ -320,7 +318,7 @@ def collect_sources(repositories: list[str], destination: Path,
     with tempfile.TemporaryDirectory() as work:
         for index, repo in enumerate(repositories):
             stage = Path(work) / str(index)
-            candidate = collect(list_releases(repo, token), stage, {}, token, repo)
+            candidate = collect(list_releases(repo, token), stage, token, repo)
             for name, sha in candidate['packages'].items():
                 if name in all_packages:
                     raise CollectionError(f'Package filename collision across sources: {name}')
@@ -383,18 +381,26 @@ def main() -> None:
     try:
         repositories = load_sources(args.sources)
         active, removed = load_lock_state(args.lock)
-        candidate = collect_sources(repositories, args.output, active, token)
-        proposed = resolve_lock(candidate['packages'], active, removed,
-                                args.require_locked)
+        # Download into an isolated staging tree. Never leave unreviewed
+        # binaries in the build output, including when a lock check fails.
+        with tempfile.TemporaryDirectory() as staging_dir:
+            stage = Path(staging_dir) / 'packages'
+            candidate = collect_sources(repositories, stage, active, token)
+            proposed = resolve_lock(candidate['packages'], active, removed,
+                                    args.require_locked)
+            if args.output.exists() and any(args.output.iterdir()):
+                raise CollectionError(f'Output directory must be empty: {args.output}')
+            args.output.mkdir(parents=True, exist_ok=True)
+            for suite in SUITES:
+                for package in (stage / suite).glob('*.deb'):
+                    if package.name in active:
+                        target = args.output / suite / package.name
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(package, target)
+        # Write the candidate lock only after all sources and allowed bytes
+        # have been checked. In discovery mode it may propose unreviewed hashes.
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
         args.candidate_lock.write_text(json.dumps(proposed, indent=2) + '\n')
-        # Every archive is built exclusively from active, reviewed package bytes.
-        # Discovery can propose new binaries in the lockfile, but never publishes
-        # or archives unreviewed or deliberately removed versions.
-        for suite in SUITES:
-            for package in (args.output / suite).glob('*.deb'):
-                if package.name not in active:
-                    package.unlink()
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             'schema': 1,
