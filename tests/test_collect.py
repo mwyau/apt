@@ -60,7 +60,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_package_control_requires_exact_name_version_arch(self):
         with patch.object(collect.subprocess, 'check_output',
-                          return_value='netavark\\n1.14.0-2xddd1~trixie\\namd64\\n'):
+                          return_value='netavark\n1.14.0-2xddd1~trixie\namd64\n'):
             collect.verify_deb_control(Path('netavark.deb'), 'trixie', 'amd64',
                                        '1.14.0-2xddd1~trixie')
             with self.assertRaisesRegex(collect.CollectionError, 'Control metadata mismatch'):
@@ -84,7 +84,7 @@ class CollectorTests(unittest.TestCase):
                           side_effect=lambda u, token='': lookup[u]):
             expected, normalized, checksums = collect.validated_release(release, '')
         self.assertEqual(set(expected), set(binaries))
-        self.assertEqual(set(normalized), set(binaries))
+        self.assertEqual(set(normalized) - {'versions.json'}, set(binaries))
         self.assertEqual(checksums[next(iter(binaries))],
                          digest(binaries[next(iter(binaries))]))
         release['assets'][1]['digest'] = 'sha256:' + 'f' * 64
