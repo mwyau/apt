@@ -186,6 +186,13 @@ class ArchiveLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing indexed versions'):
             verify.verify(site, packages)
         index.write_bytes(original_index)
+        # GPG verification must fail if a signed Release file is altered.
+        release_file = site / 'dists' / 'trixie' / 'Release'
+        original_release = release_file.read_bytes()
+        release_file.write_bytes(original_release + b'\nTampered: yes\n')
+        with self.assertRaises(subprocess.CalledProcessError):
+            verify.verify(site, packages)
+        release_file.write_bytes(original_release)
 
         removed_lock = self.write_lock('removed.json',
                                        {k: v for k, v in new_hashes.items()
@@ -231,6 +238,34 @@ class ArchiveLifecycleTests(unittest.TestCase):
                          f'{REPOSITORY}@netavark-20261030.1')
         self.assertEqual([item['sha256'] for item in evidence['hash_history']],
                          [old_hashes[target], sha256(changed_data)])
+
+    def test_tampered_binary_and_wrong_control_fields_fail_closed(self):
+        first, binaries = self.make_release('netavark-20261029.1', 1)
+        self.releases = [first]
+        target = sorted(binaries)[0]
+        actual = target.replace('~', '.')
+        url = next(asset['browser_download_url'] for asset in first['assets']
+                   if asset['name'] == actual)
+        original = self.downloads[url]
+        self.downloads[url] = b'not the checksummed Debian bytes'
+        approved = self.write_lock('valid-archive-lock.json',
+                                   {name: sha256(data) for name, data in binaries.items()})
+        with self.assertRaisesRegex(SystemExit, 'SHA256 mismatch'):
+            self.run_collector('corrupted-download', approved)
+        self.assertFalse((self.root / 'corrupted-download' / 'packages').exists())
+        self.downloads[url] = original
+
+        suite = target.split('~')[1].split('_')[0]
+        arch = target.removesuffix('.deb').rsplit('_', 1)[1]
+        _different_name, wrong_control = self.make_deb(2, suite, arch)
+        wrong_release, _ = self.make_release(
+            'netavark-20261030.1', 1, override={target: wrong_control})
+        self.releases = [wrong_release]
+        with self.assertRaisesRegex(SystemExit, 'Control metadata mismatch'):
+            self.run_collector(
+                'wrong-control', self.write_lock('empty-archive-lock.json', {}),
+                require_locked=False)
+        self.assertFalse((self.root / 'wrong-control' / 'packages').exists())
 
     def test_different_sources_colliding_fail_closed(self):
         first, binaries = self.make_release('netavark-20261029.1', 1)
