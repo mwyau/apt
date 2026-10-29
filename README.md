@@ -7,10 +7,9 @@ This project does **not** publish any website or packages yet.
 ## First-stage workflow
 
 [Build signed APT archive](.github/workflows/build.yml) runs on PRs and on
-`main`, building a synthetic fixture to test the complete publishing format.
-For a manual run, select one of two modes:
+`main`, building **both** the synthetic fixture and the real approved release archive in separate matrix jobs. Manual dispatch runs both modes as well:
 
-- **`fixture`** (default): creates 12 **non-functional** `xddd-apt-test-fixture`
+- **`fixture`**: creates 12 **non-functional** `xddd-apt-test-fixture`
   packages: two versions for three Debian suites and two architectures. No
   downloads or approved release required. Never install these as Netavark.
 - **`releases`**: enumerates all published, non-draft, non-prerelease
@@ -46,15 +45,21 @@ filename has different bytes, the build fails. If a previously approved
 package has its checksum recorded in `archive-lock.json`, the build fails if
 that package changes **or disappears**.
 
-After the first actual release is approved, copy the generated
-`archive-lock.candidate.json` into `archive-lock.json` in a reviewed PR.
-This records previously published package bytes independent of GitHub Releases,
-which remain editable. Commit the updated lock alongside subsequent approved
-releases; the workflow currently produces the candidate file for review but
-**does not update it automatically**.
+The six Debian binaries from the first approved release
+[`netavark-20261029.1`](https://github.com/mwyau/netavark-backports/releases/tag/netavark-20261029.1)
+are already recorded in `archive-lock.json`. These SHA-256 values remain a
+reviewed source of truth independent of editable GitHub Releases.
+
+When later releases add binaries, review the produced
+`archive-lock.candidate.json` and update `archive-lock.json` in a PR.
+**This workflow never updates its lock automatically.**
 
 The source Release artifact's snapshot filenames are derived from its
-`versions.json`. Only `.deb` binaries are published: source packages stay in
+`versions.json`. GitHub replaces the `~` in Debian binary release asset
+filenames with `.`; this is *only* a download filename change, not a Debian
+package version change. The collector checks the original canonical name in
+`SHA256SUMS` and restores the canonical `~suite` filename locally.
+Do not change the package `Version` field to work around GitHub filenames. Only `.deb` binaries are published: source packages stay in
 upstream GitHub Releases. The backports project controls which releases are
 approved; this repository never promotes drafts or substitutes synthetic
 packages into `releases` mode.
@@ -75,8 +80,7 @@ or `Release` indexes are used. The generated site is **not** committed to Git.
 
 ## Planned deployment (out of scope)
 
-Once the release builder succeeds and the actual approved Netavark release
-exists, replace the ephemeral test signer with a protected production signing
+When planning the later production deployment, replace the ephemeral test signer with a protected production signing
 subkey, implement a fully reviewed archive lock, and add a separately approved
 Cloudflare Pages deployment. `apt.xddd.org` remains a proposed hostname, not
 a configured domain.
