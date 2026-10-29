@@ -37,10 +37,14 @@ jobs:
           set -euo pipefail
           python3 scripts/collect.py --output .artifacts/packages \
             --lock archive-lock.json \
-            --candidate-lock .artifacts/archive-lock.candidate.json
+            --candidate-lock .artifacts/archive-lock.candidate.json \
+            --manifest .artifacts/archive-provenance.json
 
       - name: Build signed APT archive using temporary test-only GPG key
         run: bash scripts/build.sh .artifacts/packages .artifacts/site
+
+      - name: Include verified source provenance
+        run: cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
 
       - name: Verify packages, signatures, and APT metadata
         run: python3 scripts/verify.py --site .artifacts/site --packages .artifacts/packages
