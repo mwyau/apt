@@ -8,7 +8,7 @@ from functools import partial
 import gzip
 import hashlib
 import json
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import subprocess
 import sys
@@ -71,12 +71,12 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 def validate_apt_http(site: Path, public: Path, expected: dict) -> None:
     """Test the HTTP deployment shape, APT signatures and advertised versions."""
-    server = ThreadingHTTPServer(
-        ('127.0.0.1', 0), partial(QuietHandler, directory=str(site.resolve())))
+    server = HTTPServer(
+        ('localhost', 0), partial(QuietHandler, directory=str(site.resolve())))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        origin = f'http://127.0.0.1:{server.server_address[1]}'
+        origin = f'http://localhost:{server.server_address[1]}'
         for suite in SUITES:
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
@@ -92,6 +92,7 @@ def validate_apt_http(site: Path, public: Path, expected: dict) -> None:
                     '-o', 'Dir::Etc::trustedparts=-',
                     '-o', 'Debug::NoLocking=1',
                     '-o', 'Acquire::http::Proxy=DIRECT',
+                    '-o', 'Acquire::ForceIPv4=true',
                 ]
                 subprocess.run(['apt-get', *common, '-o', 'APT::Update::Error-Mode=any',
                                 'update'], check=True)
