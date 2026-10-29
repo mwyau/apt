@@ -46,7 +46,9 @@ class CollectorTests(unittest.TestCase):
         draft, _ = self.fake_release('netavark-20261031.1', manifest2, {}, draft=True)
         lookup = {**{a['browser_download_url']: blobs1[a['name']] for a in first['assets']},
                   **{a['browser_download_url']: blobs2[a['name']] for a in second['assets']}}
-        with tempfile.TemporaryDirectory() as temp, patch.object(collect, 'get_bytes', side_effect=lambda u, token='': lookup[u]):
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(collect, 'get_bytes', side_effect=lambda u, token='': lookup[u]), \
+                patch.object(collect, 'verify_deb_control'):
             result = collect.collect([second, draft, first], Path(temp), {}, '')
             self.assertEqual(len(result['packages']), 12)
             for suite in collect.SUITES:
@@ -55,6 +57,41 @@ class CollectorTests(unittest.TestCase):
             fname = next(iter(result['packages']))
             with self.assertRaisesRegex(collect.CollectionError, 'changed since archive lock'):
                 collect.collect([first], Path(temp), {fname: 'f' * 64}, '')
+
+    def test_package_control_requires_exact_name_version_arch(self):
+        with patch.object(collect.subprocess, 'check_output',
+                          return_value='netavark\\n1.14.0-2xddd1~trixie\\namd64\\n'):
+            collect.verify_deb_control(Path('netavark.deb'), 'trixie', 'amd64',
+                                       '1.14.0-2xddd1~trixie')
+            with self.assertRaisesRegex(collect.CollectionError, 'Control metadata mismatch'):
+                collect.verify_deb_control(Path('netavark.deb'), 'trixie', 'arm64',
+                                           '1.14.0-2xddd1~trixie')
+
+    def test_normalized_github_asset_names_are_hash_verified(self):
+        manifest = {'debian': {s: {'source': '1.14.0-2', 'revision': 1}
+                               for s in collect.SUITES}}
+        binaries = {n: (n + ':bytes').encode() for n in collect.debian_names(manifest)}
+        release, blobs = self.fake_release('netavark-20261029.1', manifest, binaries)
+        for asset in release['assets']:
+            original = asset['name']
+            if original.endswith('.deb'):
+                asset['name'] = original.replace('~', '.')
+            asset['digest'] = 'sha256:' + digest(blobs[original])
+        lookup = {a['browser_download_url']: blobs[
+            a['browser_download_url'].rsplit('/', 1)[-1]]
+            for a in release['assets']}
+        with patch.object(collect, 'get_bytes',
+                          side_effect=lambda u, token='': lookup[u]):
+            expected, normalized, checksums = collect.validated_release(release, '')
+        self.assertEqual(set(expected), set(binaries))
+        self.assertEqual(set(normalized), set(binaries))
+        self.assertEqual(checksums[next(iter(binaries))],
+                         digest(binaries[next(iter(binaries))]))
+        release['assets'][-1]['digest'] = 'sha256:' + 'f' * 64
+        with patch.object(collect, 'get_bytes',
+                          side_effect=lambda u, token='': lookup[u]):
+            with self.assertRaisesRegex(collect.CollectionError, 'digest conflict'):
+                collect.validated_release(release, '')
 
     def test_no_published_releases_fails(self):
         with tempfile.TemporaryDirectory() as temp:
