@@ -170,10 +170,12 @@ def validate_package_hashes(packages: dict, label: str) -> None:
 def load_lock_state(path: Path) -> tuple[dict[str, str], dict[str, str]]:
     """Enabled binaries are published; removed binaries cannot be rediscovered."""
     data = json.loads(path.read_text())
-    if data.get('schema') != 2 or not isinstance(data.get('packages'), dict):
+    if not isinstance(data, dict) or set(data) != {'schema', 'packages', 'removed'}:
+        raise CollectionError('Archive lock requires exactly schema, packages, and removed')
+    if data['schema'] != 2 or not isinstance(data['packages'], dict):
         raise CollectionError('Invalid archive lock file (expected schema 2)')
     active = data['packages']
-    removed = data.get('removed', {})
+    removed = data['removed']
     if not isinstance(removed, dict):
         raise CollectionError('Invalid removed packages in archive lock')
     validate_package_hashes(active, 'active')
@@ -284,7 +286,9 @@ def collect(releases: list[dict], destination: Path, token: str, repo: str) -> d
 def load_sources(path: Path) -> list[str]:
     """Only published Netavark-format releases are currently supported."""
     data = json.loads(path.read_text())
-    if data.get('schema') != 1 or not isinstance(data.get('sources'), list):
+    if not isinstance(data, dict) or set(data) != {'schema', 'sources'}:
+        raise CollectionError('Source configuration requires exactly schema and sources')
+    if data['schema'] != 1 or not isinstance(data['sources'], list):
         raise CollectionError('Invalid archive source configuration')
     sources = data['sources']
     if not sources:
