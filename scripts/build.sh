@@ -36,7 +36,8 @@ for suite in trixie forky sid; do
     -notautomatic=yes -butautomaticupgrades=yes -skip-contents -acquire-by-hash \
     "xddd-$suite-snapshot"
 done
-cp -a "$WORK/aptly/public/." "$OUTPUT/"
+# Resolve aptly's internal links so the exported archive is fully self-contained.
+cp -aL "$WORK/aptly/public/." "$OUTPUT/"
 cat > "$OUTPUT/index.html" <<'EOF'
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>XDDD APT archive (test signed)</title></head>
 <body><h1>XDDD APT build artifact</h1><p>Unpublished, test-signed CI output. Not a production repository.</p></body></html>
