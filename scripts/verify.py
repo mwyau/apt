@@ -16,7 +16,7 @@ def fields(text: str) -> dict[str, str]:
     return dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line and not line.startswith(' '))
 
 
-def verify(site: Path, mode: str) -> None:
+def verify(site: Path) -> None:
     public = site / 'xddd-archive-keyring.gpg'
     if not public.is_file() or not public.stat().st_size:
         raise ValueError('Missing public keyring')
@@ -52,34 +52,34 @@ def verify(site: Path, mode: str) -> None:
                 if package.stat().st_size != int(entry['Size']):
                     raise ValueError(f'Package size mismatch for {name}')
                 versions.add((entry['Package'], entry['Version']))
-            if mode == 'fixture':
-                selected = [ver for name, ver in versions if name == 'xddd-apt-test-fixture']
-                if len(selected) != 2:
-                    raise ValueError(f'Missing historical fixture versions for {suite}/{arch}')
+            if any(name != 'netavark' or not version.endswith(f'~{suite}')
+                   for name, version in versions):
+                raise ValueError(f'{suite}/{arch}: invalid Netavark package or suite version')
             print(f'PASS: {suite}/{arch}: {len(stanzas)} indexed packages')
-    # APT itself must accept local file source and test key in an isolated index directory.
+    # Confirm APT accepts each distribution's signed index independently.
     import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        lists = root / 'lists'
-        (lists / 'partial').mkdir(parents=True)
-        sources = root / 'sources.list'
-        sources.write_text(f'deb [signed-by={public.resolve()}] file:{site.resolve()} trixie main\n')
-        cmd = ['apt-get', '-o', f'Dir::Etc::sourcelist={sources}',
-               '-o', 'Dir::Etc::sourceparts=-', '-o', f'Dir::State::lists={lists}',
-               '-o', 'Dir::Etc::trusted=/dev/null', '-o', 'Dir::Etc::trustedparts=-',
-               '-o', 'Debug::NoLocking=1', '-o', 'APT::Get::List-Cleanup=0',
-               'update']
-        subprocess.run(cmd, check=True)
-        print('PASS: apt-get update accepts signed Trixie repository')
+    for suite in SUITES:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lists = root / 'lists'
+            (lists / 'partial').mkdir(parents=True)
+            sources = root / 'sources.list'
+            sources.write_text(
+                f'deb [signed-by={public.resolve()}] file:{site.resolve()} {suite} main\n')
+            cmd = ['apt-get', '-o', f'Dir::Etc::sourcelist={sources}',
+                   '-o', 'Dir::Etc::sourceparts=-', '-o', f'Dir::State::lists={lists}',
+                   '-o', 'Dir::Etc::trusted=/dev/null', '-o', 'Dir::Etc::trustedparts=-',
+                   '-o', 'Debug::NoLocking=1', '-o', 'APT::Get::List-Cleanup=0',
+                   '-o', 'APT::Update::Error-Mode=any', 'update']
+            subprocess.run(cmd, check=True)
+            print(f'PASS: apt-get update accepts signed {suite} repository')
 
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--site', type=Path, required=True)
-    p.add_argument('--mode', choices=('fixture', 'releases'), required=True)
     a = p.parse_args()
     try:
-        verify(a.site, a.mode)
+        verify(a.site)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
         sys.exit(f'FAIL: {e}')
