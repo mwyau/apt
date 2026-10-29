@@ -49,14 +49,14 @@ class CollectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(collect, 'get_bytes', side_effect=lambda u, token='': lookup[u]), \
                 patch.object(collect, 'verify_deb_control'):
-            result = collect.collect([second, draft, first], Path(temp), {}, '')
+            result = collect.collect([second, draft, first], Path(temp), {}, '', 'mwyau/netavark-backports')
             self.assertEqual(len(result['packages']), 12)
             for suite in collect.SUITES:
                 self.assertEqual(len(list((Path(temp) / suite).glob('*.deb'))), 4)
             self.assertEqual(result['releases'], ['netavark-20261029.1', 'netavark-20261030.1'])
             fname = next(iter(result['packages']))
             with self.assertRaisesRegex(collect.CollectionError, 'changed since archive lock'):
-                collect.collect([first], Path(temp), {fname: 'f' * 64}, '')
+                collect.collect([first], Path(temp), {fname: 'f' * 64}, '', 'mwyau/netavark-backports')
 
     def test_package_control_requires_exact_name_version_arch(self):
         with patch.object(collect.subprocess, 'check_output',
@@ -82,7 +82,7 @@ class CollectorTests(unittest.TestCase):
             for a in release['assets']}
         with patch.object(collect, 'get_bytes',
                           side_effect=lambda u, token='': lookup[u]):
-            expected, normalized, checksums = collect.validated_release(release, '')
+            expected, normalized, checksums = collect.validated_release(release, '', 'mwyau/netavark-backports')
         self.assertEqual(set(expected), set(binaries))
         self.assertEqual(set(normalized) - {'versions.json'}, set(binaries))
         self.assertEqual(checksums[next(iter(binaries))],
@@ -91,7 +91,7 @@ class CollectorTests(unittest.TestCase):
         with patch.object(collect, 'get_bytes',
                           side_effect=lambda u, token='': lookup[u]):
             with self.assertRaisesRegex(collect.CollectionError, 'digest conflict'):
-                collect.validated_release(release, '')
+                collect.validated_release(release, '', 'mwyau/netavark-backports')
 
     def test_archive_lock_rejects_bad_names_and_digests(self):
         good = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
@@ -107,10 +107,35 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaisesRegex(collect.CollectionError, 'package name'):
                 collect.load_lock(path)
 
+    def test_source_configuration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / 'sources.json'
+            config.write_text(json.dumps({
+                'schema': 1, 'sources': [
+                    {'repository': 'example/netavark-backports',
+                     'format': 'netavark-releases-v1'}]}))
+            self.assertEqual(collect.load_sources(config),
+                             ['example/netavark-backports'])
+            config.write_text(json.dumps({
+                'schema': 1, 'sources': [
+                    {'repository': '../escape', 'format': 'netavark-releases-v1'}]}))
+            with self.assertRaises(collect.CollectionError):
+                collect.load_sources(config)
+
+    def test_unreviewed_new_versions_must_be_locked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / 'sources.json'
+            config.write_text(json.dumps({
+                'schema': 1, 'sources': [
+                    {'repository': 'example/netavark-backports',
+                     'format': 'netavark-releases-v1'}]}))
+            self.assertEqual(collect.load_sources(config),
+                             ['example/netavark-backports'])
+
     def test_no_published_releases_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(collect.CollectionError, 'No approved'):
-                collect.collect([], Path(temp), {}, '')
+                collect.collect([], Path(temp), {}, '', 'mwyau/netavark-backports')
 
 
 if __name__ == '__main__':
