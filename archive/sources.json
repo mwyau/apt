@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "repository": "mwyau/netavark-backports",
+      "format": "netavark-releases-v1"
+    }
+  ]
+}
