@@ -49,14 +49,14 @@ class CollectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(collect, 'get_bytes', side_effect=lambda u, token='': lookup[u]), \
                 patch.object(collect, 'verify_deb_control'):
-            result = collect.collect([second, draft, first], Path(temp), {}, '', 'mwyau/netavark-backports')
+            result = collect.collect([second, draft, first], Path(temp), '', 'mwyau/netavark-backports')
             self.assertEqual(len(result['packages']), 12)
             for suite in collect.SUITES:
                 self.assertEqual(len(list((Path(temp) / suite).glob('*.deb'))), 4)
             self.assertEqual(result['releases'], ['netavark-20261029.1', 'netavark-20261030.1'])
             fname = next(iter(result['packages']))
             with self.assertRaisesRegex(collect.CollectionError, 'modified='):
-                collect.collect([first], Path(temp), {fname: 'f' * 64}, '', 'mwyau/netavark-backports')
+                collect.ensure_locked_subset(result['packages'], {fname: 'f' * 64})
 
     def test_conflicting_filename_chooses_latest_dated_tag(self):
         manifest = {'debian': {s: {'source': '1.14.0-2', 'revision': 1}
@@ -77,7 +77,7 @@ class CollectorTests(unittest.TestCase):
                 patch.object(collect, 'get_bytes',
                              side_effect=lambda url, token='': lookup[url]), \
                 patch.object(collect, 'verify_deb_control'):
-            result = collect.collect([new, old], Path(temp), {}, '',
+            result = collect.collect([new, old], Path(temp), '',
                                      'mwyau/netavark-backports')
             self.assertEqual(result['packages'][target], digest(newest_values[target]))
             self.assertEqual(result['selected_tags'][target], 'netavark-20261030.1')
@@ -210,7 +210,7 @@ class CollectorTests(unittest.TestCase):
     def test_no_published_releases_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(collect.CollectionError, 'No approved'):
-                collect.collect([], Path(temp), {}, '', 'mwyau/netavark-backports')
+                collect.collect([], Path(temp), '', 'mwyau/netavark-backports')
 
 
 if __name__ == '__main__':
