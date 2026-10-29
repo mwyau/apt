@@ -142,6 +142,8 @@ The multi-version archive tests are based on temporary packages because only
 one distinct approved upstream version was available at the time of review.
 Scheduled discovery PR creation and public publication are not part of these tests.
 
+The human-facing landing page is maintained in [`templates/index.html`](templates/index.html) and rendered from the built APT package indexes by [`scripts/landing.py`](scripts/landing.py). Package versions are not hard-coded in the page.
+
 ## Local development
 
 Requirements: Python 3, `aptly`, `gnupg`, `gpgv`, `dpkg-dev` and `apt-get`.
@@ -157,6 +159,7 @@ python3 scripts/collect.py \
   --manifest .artifacts/archive-provenance.json
 bash scripts/build/aptly.sh .artifacts/packages .artifacts/site
 cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
+python3 scripts/landing.py --site .artifacts/site
 python3 scripts/verify.py --site .artifacts/site --packages .artifacts/packages
 ```
 
