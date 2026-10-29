@@ -123,14 +123,17 @@ class CollectorTests(unittest.TestCase):
                 collect.load_sources(config)
 
     def test_unreviewed_new_versions_must_be_locked(self):
-        with tempfile.TemporaryDirectory() as temp:
-            config = Path(temp) / 'sources.json'
-            config.write_text(json.dumps({
-                'schema': 1, 'sources': [
-                    {'repository': 'example/netavark-backports',
-                     'format': 'netavark-releases-v1'}]}))
-            self.assertEqual(collect.load_sources(config),
-                             ['example/netavark-backports'])
+        sha = 'a' * 64
+        original = {'netavark_1.14.0-2xddd1~trixie_amd64.deb': sha}
+        candidate = dict(original)
+        collect.ensure_locked(candidate, original)
+        candidate['netavark_1.14.0-2xddd2~trixie_amd64.deb'] = 'b' * 64
+        with self.assertRaisesRegex(collect.CollectionError, 'new='):
+            collect.ensure_locked(candidate, original)
+        with self.assertRaisesRegex(collect.CollectionError, 'missing='):
+            collect.ensure_locked({}, original)
+        with self.assertRaisesRegex(collect.CollectionError, 'modified='):
+            collect.ensure_locked({next(iter(original)): 'f' * 64}, original)
 
     def test_no_published_releases_fails(self):
         with tempfile.TemporaryDirectory() as temp:
