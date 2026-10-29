@@ -1,0 +1,87 @@
+name: Build signed APT archive (no deployment)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'fixture = synthetic test packages; releases = approved Netavark releases only'
+        type: choice
+        options: [fixture, releases]
+        default: fixture
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apt-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Debian archive tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends aptly gnupg dpkg-dev
+
+      - name: Test collection logic
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Create test packages or retrieve approved releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/packages
+          case "$MODE" in
+            fixture)
+              python3 scripts/fixture.py --output .artifacts/packages
+              ;;
+            releases)
+              python3 scripts/collect.py --output .artifacts/packages \
+                --lock archive-lock.json \
+                --candidate-lock .artifacts/archive-lock.candidate.json
+              ;;
+            *) echo 'Unsupported mode' >&2; exit 2 ;;
+          esac
+
+      - name: Build signed test APT archive using ephemeral GPG key
+        run: bash scripts/build.sh .artifacts/packages .artifacts/site
+
+      - name: Independently verify packages, signatures and APT metadata
+        run: python3 scripts/verify.py --site .artifacts/site --mode "$MODE"
+
+      - name: Confirm no secret signing material in site
+        run: |
+          set -euo pipefail
+          ! grep -R -l --include='*.asc' --include='*.txt' --include='*.html' \
+            'BEGIN PGP PRIVATE KEY BLOCK' .artifacts/site
+
+      - name: Archive complete static site
+        run: |
+          set -euo pipefail
+          tar -C .artifacts/site -czf .artifacts/apt-site.tar.gz .
+          sha256sum .artifacts/apt-site.tar.gz > .artifacts/apt-site.tar.gz.sha256
+
+      - name: Upload output (NOT publicly deployed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-site-${{ env.MODE }}
+          path: |
+            .artifacts/apt-site.tar.gz
+            .artifacts/apt-site.tar.gz.sha256
+            .artifacts/archive-lock.candidate.json
+          if-no-files-found: error
+          retention-days: 7
