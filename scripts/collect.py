@@ -225,7 +225,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', default=REPO, choices=[REPO])
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--lock', type=Path, default=Path('archive-lock.json'))
+    parser.add_argument('--lock', type=Path, default=Path('archive/package-lock.json'))
     parser.add_argument('--candidate-lock', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
     args = parser.parse_args()
