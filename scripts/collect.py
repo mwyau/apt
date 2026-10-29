@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -16,7 +18,6 @@ SUITES = ('trixie', 'forky', 'sid')
 ARCHES = ('amd64', 'arm64')
 TAG = re.compile(r'netavark-\d{8}\.[1-9]\d*\Z')
 CHECKSUM = re.compile(r'([0-9a-f]{64})  ([A-Za-z0-9_.+~:-]+)\Z')
-REPO = 'mwyau/netavark-backports'
 MAX_ASSET_BYTES = 100 * 1024 * 1024
 
 
@@ -91,7 +92,7 @@ def release_assets(release: dict) -> dict[str, dict]:
     return assets
 
 
-def validated_release(release: dict, token: str) -> tuple[dict, dict, dict]:
+def validated_release(release: dict, token: str, repo: str) -> tuple[dict, dict, dict]:
     assets = release_assets(release)
     for name in ('versions.json', 'SHA256SUMS'):
         if name not in assets:
@@ -101,7 +102,7 @@ def validated_release(release: dict, token: str) -> tuple[dict, dict, dict]:
         item = assets[name]
         url = item['browser_download_url']
         parsed = urlparse(url)
-        if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{REPO}/releases/download/'):
+        if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{repo}/releases/download/'):
             raise CollectionError(f'Unexpected asset download URL for {name}')
         return get_bytes(url)
 
@@ -171,7 +172,7 @@ def load_lock(path: Path) -> dict[str, str]:
     return locked
 
 
-def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str) -> dict:
+def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str, repo: str) -> dict:
     approved = sorted((r for r in releases if TAG.fullmatch(r.get('tag_name', ''))
                        and not r.get('draft') and not r.get('prerelease')),
                       key=lambda r: (int(r['tag_name'][9:17]), int(r['tag_name'].split('.')[-1])))
@@ -182,7 +183,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
     provenance: dict[str, list[str]] = {}
     upload_dates: dict[str, str | None] = {}
     for release in approved:
-        names, assets, sums = validated_release(release, token)
+        names, assets, sums = validated_release(release, token, repo)
         for name, (suite, arch, version) in sorted(names.items()):
             digest = sums[name]
             if name in observed:
@@ -196,7 +197,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
             # The release data is reviewed independently; never trust filenames without hash verification.
             url = item['browser_download_url']
             parsed = urlparse(url)
-            if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{REPO}/releases/download/'):
+            if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{repo}/releases/download/'):
                 raise CollectionError(f'Unexpected package URL: {name}')
             contents = get_bytes(url)
             if hashlib.sha256(contents).hexdigest() != digest:
@@ -212,7 +213,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
     missing = set(lock) - set(observed)
     if missing:
         raise CollectionError(f'Previously locked packages disappeared: {sorted(missing)}')
-    return {'schema': 1, 'packages': dict(sorted(observed.items())),
+    return {'schema': 1, 'repository': repo, 'packages': dict(sorted(observed.items())),
             'releases': [r['tag_name'] for r in approved], 'provenance': provenance,
             'uploaded_at': upload_dates,
             'release_metadata': [
@@ -221,37 +222,109 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
                 for r in approved]}
 
 
+def load_sources(path: Path) -> list[str]:
+    """Only published Netavark-format releases are currently supported."""
+    data = json.loads(path.read_text())
+    if data.get('schema') != 1 or not isinstance(data.get('sources'), list):
+        raise CollectionError('Invalid archive source configuration')
+    sources = data['sources']
+    if not sources:
+        raise CollectionError('At least one source is required')
+    repos: list[str] = []
+    for source in sources:
+        if not isinstance(source, dict) or source.get('format') != 'netavark-releases-v1':
+            raise CollectionError('Unsupported source format (expected netavark-releases-v1)')
+        repository = source.get('repository')
+        if not isinstance(repository, str) or not re.fullmatch(
+                r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+            raise CollectionError(f'Invalid GitHub source repository: {repository!r}')
+        if repository in repos:
+            raise CollectionError(f'Duplicate GitHub source: {repository}')
+        repos.append(repository)
+    return repos
+
+
+def collect_sources(repositories: list[str], destination: Path,
+                    lock: dict[str, str], token: str) -> dict:
+    """Combine compatible repositories while rejecting overlapping package identities."""
+    destination.mkdir(parents=True, exist_ok=True)
+    all_packages: dict[str, str] = {}
+    all_releases: list[dict] = []
+    all_provenance: dict[str, list[str]] = {}
+    upload_dates: dict[str, str | None] = {}
+    with tempfile.TemporaryDirectory() as work:
+        for index, repo in enumerate(repositories):
+            stage = Path(work) / str(index)
+            candidate = collect(list_releases(repo, token), stage, {}, token, repo)
+            for name, sha in candidate['packages'].items():
+                if name in all_packages:
+                    raise CollectionError(f'Package filename collision across sources: {name}')
+                all_packages[name] = sha
+                for suite in SUITES:
+                    item = stage / suite / name
+                    if item.is_file():
+                        target = destination / suite / name
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(item, target)
+                        break
+                else:
+                    raise CollectionError(f'Missing collected package: {name}')
+                all_provenance[name] = [f"{repo}@{tag}"
+                                        for tag in candidate['provenance'][name]]
+                upload_dates[name] = candidate['uploaded_at'][name]
+            for release in candidate['release_metadata']:
+                all_releases.append({'repository': repo, **release})
+    for name, expected_sha in lock.items():
+        if name not in all_packages:
+            raise CollectionError(f'Previously locked package disappeared: {name}')
+        if all_packages[name] != expected_sha:
+            raise CollectionError(f'Historical artifact changed since archive lock: {name}')
+    return {'schema': 1, 'packages': dict(sorted(all_packages.items())),
+            'release_metadata': all_releases, 'provenance': all_provenance,
+            'uploaded_at': upload_dates}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--repo', default=REPO, choices=[REPO])
+    parser.add_argument('--sources', type=Path, default=Path('archive/sources.json'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--lock', type=Path, default=Path('archive/package-lock.json'))
     parser.add_argument('--candidate-lock', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
+    parser.add_argument('--require-locked', action='store_true',
+                        help='Fail if any unreviewed new package is discovered')
     args = parser.parse_args()
     import os
     token = os.getenv('GH_TOKEN', '')
     try:
-        candidate = collect(list_releases(args.repo, token), args.output, load_lock(args.lock), token)
+        repositories = load_sources(args.sources)
+        lock = load_lock(args.lock)
+        candidate = collect_sources(repositories, args.output, lock, token)
+        if args.require_locked and candidate['packages'] != lock:
+            additions = sorted(set(candidate['packages']) - set(lock))
+            raise CollectionError(
+                f'Unreviewed new packages: {additions}. Review and merge a package-lock PR first')
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
-        args.candidate_lock.write_text(json.dumps({'schema': 1, 'packages': candidate['packages']}, indent=2) + '\n')
+        args.candidate_lock.write_text(
+            json.dumps({'schema': 1, 'packages': candidate['packages']}, indent=2) + '\n')
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             'schema': 1,
-            'source_repository': REPO,
+            'source_repositories': repositories,
             'releases': candidate['release_metadata'],
             'packages': {
                 name: {
                     'sha256': sha,
-                    'release_tags': candidate['provenance'][name],
+                    'release_ids': candidate['provenance'][name],
                     'github_asset_uploaded_at': candidate['uploaded_at'][name],
                 }
                 for name, sha in candidate['packages'].items()
             },
         }
         args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
-        print(f'Collected {len(candidate["packages"])} distinct Debian packages from {len(candidate["releases"])} published releases')
-    except (CollectionError, ValueError, KeyError, OSError) as exc:
+        print(f'Collected {len(candidate["packages"])} locked Debian packages '
+              f'from {len(candidate["release_metadata"])} source releases')
+    except (CollectionError, ValueError, KeyError, OSError, TypeError) as exc:
         sys.exit(f'ERROR: {exc}')
 
 
