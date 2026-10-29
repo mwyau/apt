@@ -267,6 +267,27 @@ class ArchiveLifecycleTests(unittest.TestCase):
                 require_locked=False)
         self.assertFalse((self.root / 'wrong-control' / 'packages').exists())
 
+    def test_distinct_versions_from_multiple_sources_are_collected(self):
+        first, first_bytes = self.make_release('netavark-20261029.1', 1)
+        second, second_bytes = self.make_release(
+            'netavark-20261030.1', 2, repo='example/other')
+        def available(repo, _token):
+            return [first] if repo == REPOSITORY else [second]
+        with patch.object(collect, 'list_releases', side_effect=available), \
+             patch.object(collect, 'get_bytes',
+                          side_effect=lambda url, token='': self.downloads[url]):
+            result = collect.collect_sources(
+                [REPOSITORY, 'example/other'],
+                self.root / 'distinct-sources', {}, '')
+        self.assertEqual(len(result['packages']), 12)
+        self.assertEqual(
+            result['selected_sources'][sorted(first_bytes)[0]],
+            f'{REPOSITORY}@netavark-20261029.1')
+        self.assertEqual(
+            result['selected_sources'][sorted(second_bytes)[0]],
+            'example/other@netavark-20261030.1')
+        self.assertEqual(len(result['release_metadata']), 2)
+
     def test_different_sources_colliding_fail_closed(self):
         first, binaries = self.make_release('netavark-20261029.1', 1)
         second, _ = self.make_release('netavark-20261029.2', 1,
