@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts import collect, verify
+from scripts.build import landing
 
 
 REPOSITORY = 'example/netavark'
@@ -124,6 +125,7 @@ class ArchiveLifecycleTests(unittest.TestCase):
             ['bash', 'scripts/build/aptly.sh', str(packages), str(site)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         shutil.copyfile(manifest, site / 'archive-provenance.json')
+        (site / 'index.html').write_text(landing.render(site), encoding='utf-8')
         verify.verify(site, packages)
         return site
 
@@ -163,6 +165,19 @@ class ArchiveLifecycleTests(unittest.TestCase):
         self.assertTrue(all(len(expected[(suite, arch)]) == 2
                             for suite in collect.SUITES for arch in collect.ARCHES))
         site = self.build_and_verify('multiversion', packages, manifest)
+        page = (site / 'index.html').read_text()
+        self.assertIn('XDDD APT repository', page)
+        self.assertIn('CI preview', page)
+        self.assertIn('not a public repository', page)
+        self.assertIn('1 older version(s)', page)
+        self.assertIn('netavark_'.split('_')[0], page)
+        self.assertIn('1.14.0-2xddd2~trixie', page)
+        self.assertIn('1.14.0-2xddd1~trixie', page)
+        self.assertIn('Suites: trixie', page)
+        self.assertIn('Signed-By: /etc/apt/keyrings/xddd-archive-keyring.gpg', page)
+        self.assertIn('Types: deb', page)
+        self.assertNotIn('Types: deb deb-src', page)
+        self.assertIn('sudo apt install netavark=1.14.0-2xddd2~trixie', page)
         # Independent verification must detect corrupt provenance even if the
         # signed package indexes themselves remain valid.
         provenance_file = site / 'archive-provenance.json'
@@ -203,7 +218,11 @@ class ArchiveLifecycleTests(unittest.TestCase):
         expected = verify.expected_packages(packages)
         self.assertTrue(all(len(expected[(suite, arch)]) == 1
                             for suite in collect.SUITES for arch in collect.ARCHES))
-        self.build_and_verify('removed', packages, manifest)
+        removed_site = self.build_and_verify('removed', packages, manifest)
+        removed_page = (removed_site / 'index.html').read_text()
+        self.assertNotIn('1 older version(s)', removed_page)
+        self.assertNotIn('1.14.0-2xddd1~trixie', removed_page)
+        self.assertIn('1.14.0-2xddd2~trixie', removed_page)
 
         packages, candidate, manifest = self.run_collector(
             'restored', self.write_lock('restored.json', new_hashes))
