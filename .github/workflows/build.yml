@@ -48,7 +48,7 @@ jobs:
         run: cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
 
       - name: Generate Debian-style archive landing page
-        run: python3 scripts/build/landing.py --site .artifacts/site
+        run: python3 scripts/landing.py --site .artifacts/site
 
       - name: Verify packages, signatures, and APT metadata
         run: python3 scripts/verify.py --site .artifacts/site --packages .artifacts/packages
