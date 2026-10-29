@@ -93,6 +93,20 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaisesRegex(collect.CollectionError, 'digest conflict'):
                 collect.validated_release(release, '')
 
+    def test_archive_lock_rejects_bad_names_and_digests(self):
+        good = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'archive-lock.json'
+            path.write_text(json.dumps({'schema': 1, 'packages': {good: 'a' * 64}}))
+            self.assertEqual(collect.load_lock(path)[good], 'a' * 64)
+            path.write_text(json.dumps({'schema': 1, 'packages': {good: 'not-a-sha'}}))
+            with self.assertRaisesRegex(collect.CollectionError, 'SHA-256'):
+                collect.load_lock(path)
+            path.write_text(json.dumps({'schema': 1, 'packages': {
+                '../wrong.deb': 'a' * 64}}))
+            with self.assertRaisesRegex(collect.CollectionError, 'package name'):
+                collect.load_lock(path)
+
     def test_no_published_releases_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(collect.CollectionError, 'No approved'):
