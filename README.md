@@ -22,7 +22,11 @@ requests, pushes to `main`, and manual dispatch. It:
    and by-hash index files.
 5. Verifies index entries, binary checksums, signatures and repository priority
    fields; runs `apt-get update` separately against Trixie, Forky and Sid.
-6. Uploads `apt-site.tar.gz`, `apt-site.tar.gz.sha256` and the candidate
+6. Adds `archive-provenance.json` to the site, documenting all approved
+   source releases, each binary's SHA-256 digest, and the original GitHub
+   asset-upload date. This metadata is informational; it does not substitute
+   for repository signatures or checksum verification.
+7. Uploads `apt-site.tar.gz`, `apt-site.tar.gz.sha256` and the candidate
    updated checksum lock as a GitHub Actions artifact called `apt-site`.
 
 The latest approved release is discovered automatically. The initial source
@@ -67,9 +71,11 @@ python3 -m unittest discover -s tests -v
 python3 scripts/collect.py \
   --output .artifacts/packages \
   --lock archive-lock.json \
-  --candidate-lock .artifacts/archive-lock.candidate.json
+  --candidate-lock .artifacts/archive-lock.candidate.json \
+  --manifest .artifacts/archive-provenance.json
 bash scripts/build.sh .artifacts/packages .artifacts/site
-python3 scripts/verify.py --site .artifacts/site
+cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
+python3 scripts/verify.py --site .artifacts/site --packages .artifacts/packages
 ```
 
 To access a GitHub API token when needed for rate limits, set `GH_TOKEN` in
