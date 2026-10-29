@@ -56,8 +56,8 @@ version disappears from release history, the build stops.
 A separate [daily discovery workflow](.github/workflows/discover.yml) runs at
 08:17 UTC and can also be dispatched manually. It reads `archive/sources.json`,
 scans published upstream releases, checks package bytes and control fields,
-and opens a PR changing only `archive/package-lock.json` when new package
-hashes appear. It never silently replaces existing locked package bytes.
+and opens a PR changing only `archive/package-lock.json` when newly discovered
+package hashes are not already enabled or disabled. It never silently replaces existing locked package bytes.
 Only one automatic lock-update PR is kept open at a time. If a source release
 contains no new binary versions, there is no package-lock PR.
 
@@ -73,6 +73,31 @@ GitHub Release storage may replace the `~` in `.deb` **asset filenames** with
 `.`. The collector maps those names back to their checksummed canonical
 filenames while preserving the `~trixie`, `~forky`, and `~sid` **Debian package
 versions**. Ubuntu, RPM and source artifacts are excluded from this APT archive.
+
+## Remove or recover a published version
+
+[`archive/package-lock.json`](archive/package-lock.json) is the **publication
+allowlist**, not simply a log of everything upstream offers. It has two maps:
+
+- `packages`: enabled, reviewed package filenames and SHA-256 values
+  included in each generated APT archive.
+- `disabled`: previously approved versions intentionally excluded from
+  publication, retaining their original reviewed hashes.
+
+To **remove** a version, move its filename and unchanged SHA-256 from
+`packages` into `disabled` and merge a reviewed PR. To **recover** it, move
+that exact entry back to `packages`. The next build downloads the original
+upstream binary, checks its SHA-256 and Debian control fields, and publishes
+it only if the hash matches the lock.
+
+Do **not** simply delete the record: without its disabled-history entry,
+scheduled discovery would propose the old upstream package again. A disabled
+entry prevents that. Re-enabling a missing or changed upstream asset fails
+closed. At least one package for each supported Debian suite and architecture
+is currently required by the APT builder.
+
+The daily discovery job proposes only packages absent from **both** maps.
+Production publication remains a separate, future approval-gated operation.
 
 ## Local development
 
