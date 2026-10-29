@@ -73,9 +73,9 @@ class CollectorTests(unittest.TestCase):
             **{a['browser_download_url']: old_blobs[a['name']] for a in old['assets']},
             **{a['browser_download_url']: new_blobs[a['name']] for a in new['assets']},
         }
-        with tempfile.TemporaryDirectory() as temp, \\
+        with tempfile.TemporaryDirectory() as temp, \
                 patch.object(collect, 'get_bytes',
-                             side_effect=lambda url, token='': lookup[url]), \\
+                             side_effect=lambda url, token='': lookup[url]), \
                 patch.object(collect, 'verify_deb_control'):
             result = collect.collect([new, old], Path(temp), {}, '',
                                      'mwyau/netavark-backports')
