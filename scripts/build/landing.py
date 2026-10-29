@@ -31,9 +31,10 @@ def version_compare(left: str, right: str) -> int:
     return 0
 
 
-def packages_from_indexes(site: Path) -> dict[tuple[str, str], dict[str, set[str]]]:
+def packages_from_indexes(site: Path) -> tuple[dict, dict]:
     result: dict[tuple[str, str], dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set))
+    descriptions: dict[tuple[str, str], str] = {}
     for suite in SUITE_ORDER:
         for arch in ARCH_ORDER:
             path = site / 'dists' / suite / 'main' / f'binary-{arch}' / 'Packages.gz'
@@ -49,12 +50,15 @@ def packages_from_indexes(site: Path) -> dict[tuple[str, str], dict[str, set[str
                     package = entries['Package']
                     version = entries['Version']
                     result[(suite, package)][version].add(arch)
+                    description = entries.get('Description', '').strip()
+                    if description:
+                        descriptions.setdefault((suite, package), description)
     if not result:
         raise ValueError('No packages in APT indexes')
-    return result
+    return result, descriptions
 
 
-def package_rows(indexes: dict) -> tuple[str, str, str, str]:
+def package_rows(indexes: dict, descriptions: dict) -> tuple[str, str, str, str]:
     lines: list[str] = []
     first_package: str | None = None
     first_version: str | None = None
@@ -75,9 +79,12 @@ def package_rows(indexes: dict) -> tuple[str, str, str, str]:
             additional = (
                 f'<details><summary>{len(versions) - 1} older version(s)</summary>'
                 f'<p>{historical}</p></details>')
+        description = descriptions.get((suite, package), '')
+        summary = (f'<span class="small summary">{escape(description)}</span>'
+                   if description else '')
         lines.append(
             '<tr>'
-            f'<th scope="row">{escape(package)}</th>'
+            f'<th scope="row">{escape(package)}{summary}</th>'
             f'<td><code>{escape(suite)}</code></td>'
             f'<td><code>{escape(newest)}</code>{additional}</td>'
             f'<td>{escape(architectures)}</td>'
@@ -87,7 +94,8 @@ def package_rows(indexes: dict) -> tuple[str, str, str, str]:
 
 
 def render(site: Path) -> str:
-    rows, package, version, suite = package_rows(packages_from_indexes(site))
+    indexes, descriptions = packages_from_indexes(site)
+    rows, package, version, suite = package_rows(indexes, descriptions)
     provenance = json.loads((site / 'archive-provenance.json').read_text())
     repos = provenance.get('source_repositories', [])
     if not isinstance(repos, list) or not repos:
@@ -141,6 +149,7 @@ th, td {{ text-align: left; padding: .7rem .5rem; vertical-align: top;
           border-bottom: 1px solid #e4e1e3; }}
 thead {{ background: #f6f5f5; }}
 th {{ font-weight: 650; }}
+.summary {{ display: block; font-weight: 400; margin-top: .15rem; }}
 code, pre {{ font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .88em; }}
 code {{ overflow-wrap: anywhere; }}
 pre {{ padding: 1rem; border: 1px solid #e4e1e3; background: #f8f8f8;
@@ -196,7 +205,7 @@ archive version should be requested explicitly.</p>
 </section>
 <footer>
 <p>Sources: {sources}. <a href="archive-provenance.json">Archive provenance</a>
-· <a href="dists/">Distribution indexes</a>
+· <a href="dists/{escape(suite)}/InRelease">Signed release metadata</a>
 · <a href="xddd-archive-keyring.gpg">Archive public key (test only)</a>
 · <a href="https://github.com/mwyau/apt">Repository builder</a>.</p>
 </footer>
