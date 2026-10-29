@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from functools import partial
 import gzip
 import hashlib
 import json
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from threading import Thread
 
 SUITES = ('trixie', 'forky', 'sid')
 ARCHES = ('amd64', 'arm64')
@@ -64,51 +61,35 @@ def expected_packages(packages: Path) -> dict[tuple[str, str], set[tuple[str, st
     return expected
 
 
-class QuietHandler(SimpleHTTPRequestHandler):
-    def log_message(self, *_args: object) -> None:
-        pass
-
-
-def validate_apt_http(site: Path, public: Path, expected: dict) -> None:
-    """Test the HTTP deployment shape, APT signatures and advertised versions."""
-    server = HTTPServer(
-        ('localhost', 0), partial(QuietHandler, directory=str(site.resolve())))
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        origin = f'http://localhost:{server.server_address[1]}'
-        for suite in SUITES:
-            with tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                lists = root / 'lists'
-                (lists / 'partial').mkdir(parents=True)
-                sources = root / 'sources.list'
-                sources.write_text(f'deb [signed-by={public.resolve()}] {origin} {suite} main\n')
-                common = [
-                    '-o', f'Dir::Etc::sourcelist={sources}',
-                    '-o', 'Dir::Etc::sourceparts=-',
-                    '-o', f'Dir::State::lists={lists}',
-                    '-o', 'Dir::Etc::trusted=/dev/null',
-                    '-o', 'Dir::Etc::trustedparts=-',
-                    '-o', 'Debug::NoLocking=1',
-                    '-o', 'Acquire::http::Proxy=DIRECT',
-                    '-o', 'Acquire::ForceIPv4=true',
-                ]
-                subprocess.run(['apt-get', *common, '-o', 'APT::Update::Error-Mode=any',
-                                'update'], check=True)
-                lines = subprocess.check_output(
-                    ['apt-cache', *common, 'madison', 'netavark'], text=True)
-                advertised = {line.split('|')[1].strip()
-                              for line in lines.splitlines() if len(line.split('|')) >= 3}
-                required = {version for name, version, _arch, _sha
-                            in expected[(suite, 'amd64')] if name == 'netavark'}
-                if advertised != required:
-                    raise ValueError(f'{suite}: APT versions {advertised} != {required}')
-                print(f'PASS: HTTP APT update and {len(required)} version(s) for {suite}')
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=10)
+def validate_apt_local(site: Path, public: Path, expected: dict) -> None:
+    """Check local-file APT sources and advertised versions without a server."""
+    for suite in SUITES:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lists = root / 'lists'
+            (lists / 'partial').mkdir(parents=True)
+            sources = root / 'sources.list'
+            sources.write_text(
+                f'deb [signed-by={public.resolve()}] file:{site.resolve()} {suite} main\\n')
+            common = [
+                '-o', f'Dir::Etc::sourcelist={sources}',
+                '-o', 'Dir::Etc::sourceparts=-',
+                '-o', f'Dir::State::lists={lists}',
+                '-o', 'Dir::Etc::trusted=/dev/null',
+                '-o', 'Dir::Etc::trustedparts=-',
+                '-o', 'Debug::NoLocking=1',
+            ]
+            subprocess.run(['apt-get', *common, '-o', 'APT::Update::Error-Mode=any',
+                            'update'], check=True)
+            lines = subprocess.check_output(
+                ['apt-cache', *common, 'madison', 'netavark'], text=True)
+            advertised = {line.split('|')[1].strip()
+                          for line in lines.splitlines() if len(line.split('|')) >= 3}
+            required = {version for name, version, _arch, _sha
+                        in expected[(suite, 'amd64')] if name == 'netavark'}
+            if advertised != required:
+                raise ValueError(f'{suite}: APT versions {advertised} != {required}')
+            print(f'PASS: local APT update and {len(required)} version(s) for {suite}')
 
 
 def verify(site: Path, packages: Path) -> None:
@@ -182,7 +163,7 @@ def verify(site: Path, packages: Path) -> None:
         if set(entry['release_tags']) - approved_tags:
             raise ValueError(f'Unrecognized source release in provenance: {name}')
     print(f'PASS: provenance covers {len(records)} verified Debian binaries')
-    validate_apt_http(site, public, expected)
+    validate_apt_local(site, public, expected)
 
 
 if __name__ == '__main__':
