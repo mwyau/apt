@@ -58,6 +58,49 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaisesRegex(collect.CollectionError, 'changed since archive lock'):
                 collect.collect([first], Path(temp), {fname: 'f' * 64}, '', 'mwyau/netavark-backports')
 
+    def test_conflicting_filename_chooses_latest_dated_tag(self):
+        manifest = {'debian': {s: {'source': '1.14.0-2', 'revision': 1}
+                               for s in collect.SUITES}}
+        binaries = {n: (n + ':original').encode()
+                    for n in collect.debian_names(manifest)}
+        target = sorted(binaries)[0]
+        newest_values = dict(binaries)
+        newest_values[target] = b'changed bytes under same Debian version'
+        old, old_blobs = self.fake_release('netavark-20261029.2', manifest, binaries)
+        new, new_blobs = self.fake_release('netavark-20261030.1', manifest, newest_values)
+        # A newer date wins even when the input release list is reversed.
+        lookup = {
+            **{a['browser_download_url']: old_blobs[a['name']] for a in old['assets']},
+            **{a['browser_download_url']: new_blobs[a['name']] for a in new['assets']},
+        }
+        with tempfile.TemporaryDirectory() as temp, \\
+                patch.object(collect, 'get_bytes',
+                             side_effect=lambda url, token='': lookup[url]), \\
+                patch.object(collect, 'verify_deb_control'):
+            result = collect.collect([new, old], Path(temp), {}, '',
+                                     'mwyau/netavark-backports')
+            self.assertEqual(result['packages'][target], digest(newest_values[target]))
+            self.assertEqual(result['selected_tags'][target], 'netavark-20261030.1')
+            self.assertEqual(result['provenance'][target], ['netavark-20261030.1'])
+            self.assertEqual([e['sha256'] for e in result['hash_history'][target]],
+                             [digest(binaries[target]), digest(newest_values[target])])
+            self.assertEqual((Path(temp) / 'forky' / target).is_file(),
+                             '~forky' in target)
+            with self.assertRaisesRegex(collect.CollectionError, 'modified='):
+                collect.ensure_locked_subset(result['packages'], {target: digest(binaries[target])})
+            candidate = collect.resolve_lock(result['packages'],
+                                             {target: digest(binaries[target])}, {}, False)
+            self.assertEqual(candidate['packages'][target], digest(newest_values[target]))
+            with self.assertRaisesRegex(collect.CollectionError, 'modified='):
+                collect.resolve_lock(result['packages'],
+                                     {target: digest(binaries[target])}, {}, True)
+
+    def test_latest_tag_run_number_is_numeric(self):
+        self.assertLess(collect.release_order('netavark-20261029.9'),
+                        collect.release_order('netavark-20261029.10'))
+        self.assertLess(collect.release_order('netavark-20261029.99'),
+                        collect.release_order('netavark-20261030.1'))
+
     def test_package_control_requires_exact_name_version_arch(self):
         with patch.object(collect.subprocess, 'check_output',
                           return_value='Package: netavark\nVersion: 1.14.0-2xddd1~trixie\nArchitecture: amd64\n'):
