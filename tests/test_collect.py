@@ -122,17 +122,17 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(collect.CollectionError):
                 collect.load_sources(config)
 
-    def test_lock_is_publication_allowlist_with_disabled_history(self):
+    def test_lock_is_publication_allowlist_with_removed_history(self):
         first = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
         second = 'netavark_1.14.0-2xddd2~trixie_amd64.deb'
         a, b = 'a' * 64, 'b' * 64
         discovered = {first: a, second: b}
         active = {second: b}
-        disabled = {first: a}
-        candidate = collect.resolve_lock(discovered, active, disabled, False)
+        removed = {first: a}
+        candidate = collect.resolve_lock(discovered, active, removed, False)
         self.assertEqual(candidate, {
-            'schema': 2, 'packages': active, 'disabled': disabled})
-        self.assertEqual(collect.resolve_lock(discovered, active, disabled, True),
+            'schema': 2, 'packages': active, 'removed': removed})
+        self.assertEqual(collect.resolve_lock(discovered, active, removed, True),
                          candidate)
         # Manually restore an old version: move its original hash back to packages.
         restored = collect.resolve_lock(discovered, discovered, {}, True)
@@ -142,23 +142,23 @@ class CollectorTests(unittest.TestCase):
             collect.resolve_lock(discovered, {first: a}, {}, True)
         with self.assertRaisesRegex(collect.CollectionError, 'missing='):
             collect.resolve_lock({second: b}, discovered, {}, True)
-        with self.assertRaisesRegex(collect.CollectionError, 'Disabled historical package changed'):
-            collect.resolve_lock({first: 'f' * 64, second: b}, active, disabled, True)
+        with self.assertRaisesRegex(collect.CollectionError, 'Removed historical package changed'):
+            collect.resolve_lock({first: 'f' * 64, second: b}, active, removed, True)
         with self.assertRaisesRegex(collect.CollectionError, 'modified='):
-            collect.resolve_lock({first: a, second: 'f' * 64}, active, disabled, True)
+            collect.resolve_lock({first: a, second: 'f' * 64}, active, removed, True)
 
-    def test_disabled_history_retained_in_one_lock(self):
+    def test_removed_history_retained_in_one_lock(self):
         first = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'package-lock.json'
             path.write_text(json.dumps({
-                'schema': 2, 'packages': {}, 'disabled': {first: 'a' * 64}}))
-            active, disabled = collect.load_lock_state(path)
+                'schema': 2, 'packages': {}, 'removed': {first: 'a' * 64}}))
+            active, removed = collect.load_lock_state(path)
             self.assertEqual(active, {})
-            self.assertEqual(disabled[first], 'a' * 64)
+            self.assertEqual(removed[first], 'a' * 64)
             path.write_text(json.dumps({
                 'schema': 2, 'packages': {first: 'a' * 64},
-                'disabled': {first: 'a' * 64}}))
+                'removed': {first: 'a' * 64}}))
             with self.assertRaisesRegex(collect.CollectionError, 'both enabled'):
                 collect.load_lock_state(path)
 
