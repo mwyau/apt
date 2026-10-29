@@ -284,6 +284,18 @@ def collect_sources(repositories: list[str], destination: Path,
             'uploaded_at': upload_dates}
 
 
+def ensure_locked(discovered: dict[str, str], locked: dict[str, str]) -> None:
+    """No new binary enters a build before its checksum was approved in Git."""
+    additions = sorted(set(discovered) - set(locked))
+    missing = sorted(set(locked) - set(discovered))
+    changed = sorted(name for name in set(locked) & set(discovered)
+                     if discovered[name] != locked[name])
+    if additions or missing or changed:
+        raise CollectionError(
+            f'Archive lock mismatch: new={additions}, missing={missing}, '
+            f'modified={changed}. Review and merge a package-lock PR first')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sources', type=Path, default=Path('archive/sources.json'))
@@ -300,10 +312,8 @@ def main() -> None:
         repositories = load_sources(args.sources)
         lock = load_lock(args.lock)
         candidate = collect_sources(repositories, args.output, lock, token)
-        if args.require_locked and candidate['packages'] != lock:
-            additions = sorted(set(candidate['packages']) - set(lock))
-            raise CollectionError(
-                f'Unreviewed new packages: {additions}. Review and merge a package-lock PR first')
+        if args.require_locked:
+            ensure_locked(candidate['packages'], lock)
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
         args.candidate_lock.write_text(
             json.dumps({'schema': 1, 'packages': candidate['packages']}, indent=2) + '\n')
