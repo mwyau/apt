@@ -92,6 +92,55 @@ def validate_apt_local(site: Path, public: Path, expected: dict) -> None:
             print(f'PASS: local APT update and {len(required)} version(s) for {suite}')
 
 
+def verify_provenance(site: Path, expected: dict) -> None:
+    """Check that each approved binary has a consistent selected release history."""
+    provenance = json.loads((site / 'archive-provenance.json').read_text())
+    repositories = provenance.get('source_repositories')
+    if (provenance.get('schema') != 1 or not isinstance(repositories, list)
+            or not repositories or any(not isinstance(repo, str) for repo in repositories)):
+        raise ValueError('Invalid source provenance')
+    releases = provenance.get('releases')
+    if not isinstance(releases, list) or not releases:
+        raise ValueError('Missing approved source release records')
+    approved_ids = set()
+    for release in releases:
+        if release.get('repository') not in repositories or not isinstance(release.get('tag'), str):
+            raise ValueError('Unrecognized repository or tag in source provenance')
+        approved_ids.add(f"{release['repository']}@{release['tag']}")
+
+    expected_hashes = {}
+    for identities in expected.values():
+        for package, version, arch, sha in identities:
+            name = f'{package}_{version}_{arch}.deb'
+            if name in expected_hashes:
+                raise ValueError(f'Duplicate package identity across suites: {name}')
+            expected_hashes[name] = sha
+    records = provenance.get('packages')
+    if not isinstance(records, dict) or set(records) != set(expected_hashes):
+        raise ValueError('Source provenance does not cover every indexed package')
+    for name, sha in expected_hashes.items():
+        entry = records[name]
+        if not isinstance(entry, dict) or entry.get('sha256') != sha:
+            raise ValueError(f'Incorrect provenance checksum for {name}')
+        selected = entry.get('selected_release')
+        references = entry.get('release_ids')
+        history = entry.get('hash_history')
+        if (selected not in approved_ids or not isinstance(references, list)
+                or selected not in references or not references
+                or set(references) - approved_ids):
+            raise ValueError(f'Invalid selected source release for {name}')
+        if not isinstance(history, list) or not history:
+            raise ValueError(f'Missing hash history for {name}')
+        for record in history:
+            if (record.get('release_id') not in approved_ids
+                    or not isinstance(record.get('sha256'), str)
+                    or len(record['sha256']) != 64):
+                raise ValueError(f'Invalid hash history for {name}')
+        if history[-1] != {'release_id': selected, 'sha256': sha}:
+            raise ValueError(f'Latest selected hash does not match provenance: {name}')
+    print(f'PASS: provenance covers {len(records)} verified Debian binaries')
+
+
 def verify(site: Path, packages: Path) -> None:
     public = site / 'xddd-archive-keyring.gpg'
     if not public.is_file() or not public.stat().st_size:
@@ -139,31 +188,7 @@ def verify(site: Path, packages: Path) -> None:
                 raise ValueError(f'{suite}/{arch}: missing indexed versions={missing}; '
                                  f'unexpected indexed versions={extra}')
             print(f'PASS: {suite}/{arch}: all {len(observed)} approved versions indexed')
-    provenance_path = site / 'archive-provenance.json'
-    provenance = json.loads(provenance_path.read_text())
-    if provenance.get('schema') != 1 or not provenance.get('source_repositories'):
-        raise ValueError('Invalid source provenance')
-    if not provenance.get('releases'):
-        raise ValueError('Missing approved source release records')
-    expected_hashes = {}
-    for identities in expected.values():
-        for package, version, arch, sha in identities:
-            name = f'{package}_{version}_{arch}.deb'
-            if name in expected_hashes:
-                raise ValueError(f'Duplicate package identity across suites: {name}')
-            expected_hashes[name] = sha
-    records = provenance.get('packages')
-    if not isinstance(records, dict) or set(records) != set(expected_hashes):
-        raise ValueError('Source provenance does not cover every indexed package')
-    approved_ids = {f"{item['repository']}@{item['tag']}"
-                    for item in provenance['releases']}
-    for name, sha in expected_hashes.items():
-        entry = records[name]
-        if entry.get('sha256') != sha or not entry.get('release_ids'):
-            raise ValueError(f'Incorrect provenance checksum or release history: {name}')
-        if set(entry['release_ids']) - approved_ids:
-            raise ValueError(f'Unrecognized source release in provenance: {name}')
-    print(f'PASS: provenance covers {len(records)} verified Debian binaries')
+    verify_provenance(site, expected)
     validate_apt_local(site, public, expected)
 
 
