@@ -270,7 +270,9 @@ def load_sources(path: Path) -> list[str]:
             raise CollectionError('Unsupported source format (expected netavark-releases-v1)')
         repository = source.get('repository')
         if not isinstance(repository, str) or not re.fullmatch(
-                r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+                r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository) or any(
+                part in ('.', '..') or part.startswith('-')
+                for part in repository.split('/')):
             raise CollectionError(f'Invalid GitHub source repository: {repository!r}')
         if repository in repos:
             raise CollectionError(f'Duplicate GitHub source: {repository}')
