@@ -168,20 +168,20 @@ def validate_package_hashes(packages: dict, label: str) -> None:
 
 
 def load_lock_state(path: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """Enabled binaries are published; disabled binaries cannot be rediscovered."""
+    """Enabled binaries are published; removed binaries cannot be rediscovered."""
     data = json.loads(path.read_text())
     if data.get('schema') != 2 or not isinstance(data.get('packages'), dict):
         raise CollectionError('Invalid archive lock file (expected schema 2)')
     active = data['packages']
-    disabled = data.get('disabled', {})
-    if not isinstance(disabled, dict):
-        raise CollectionError('Invalid disabled packages in archive lock')
+    removed = data.get('removed', {})
+    if not isinstance(removed, dict):
+        raise CollectionError('Invalid removed packages in archive lock')
     validate_package_hashes(active, 'active')
-    validate_package_hashes(disabled, 'disabled')
-    overlap = set(active) & set(disabled)
+    validate_package_hashes(removed, 'removed')
+    overlap = set(active) & set(removed)
     if overlap:
-        raise CollectionError(f'Packages both enabled and disabled: {sorted(overlap)}')
-    return active, disabled
+        raise CollectionError(f'Packages both enabled and removed: {sorted(overlap)}')
+    return active, removed
 
 
 def load_lock(path: Path) -> dict[str, str]:
@@ -190,20 +190,20 @@ def load_lock(path: Path) -> dict[str, str]:
 
 
 def resolve_lock(discovered: dict[str, str], active: dict[str, str],
-                 disabled: dict[str, str], require_locked: bool) -> dict:
+                 removed: dict[str, str], require_locked: bool) -> dict:
     """Validate previously reviewed SHA-256 and propose only truly new binaries."""
     ensure_locked_subset(discovered, active)
-    for name, sha in disabled.items():
+    for name, sha in removed.items():
         if name in discovered and discovered[name] != sha:
-            raise CollectionError(f'Disabled historical package changed: {name}')
+            raise CollectionError(f'Removed historical package changed: {name}')
     new = {name: sha for name, sha in discovered.items()
-           if name not in active and name not in disabled}
+           if name not in active and name not in removed}
     if require_locked and new:
         raise CollectionError(f'Unreviewed new packages: {sorted(new)}. '
                               'Merge a lockfile review PR first')
     return {'schema': 2,
             'packages': dict(sorted({**active, **new}.items())),
-            'disabled': dict(sorted(disabled.items()))}
+            'removed': dict(sorted(removed.items()))}
 
 
 def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str, repo: str) -> dict:
@@ -346,15 +346,15 @@ def main() -> None:
     token = os.getenv('GH_TOKEN', '')
     try:
         repositories = load_sources(args.sources)
-        active, disabled = load_lock_state(args.lock)
+        active, removed = load_lock_state(args.lock)
         candidate = collect_sources(repositories, args.output, active, token)
-        proposed = resolve_lock(candidate['packages'], active, disabled,
+        proposed = resolve_lock(candidate['packages'], active, removed,
                                 args.require_locked)
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
         args.candidate_lock.write_text(json.dumps(proposed, indent=2) + '\n')
         # Every archive is built exclusively from active, reviewed package bytes.
         # Discovery can propose new binaries in the lockfile, but never publishes
-        # or archives unreviewed or deliberately disabled versions.
+        # or archives unreviewed or deliberately removed versions.
         for suite in SUITES:
             for package in (args.output / suite).glob('*.deb'):
                 if package.name not in active:
