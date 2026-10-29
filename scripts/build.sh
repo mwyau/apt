@@ -38,7 +38,7 @@ for suite in trixie forky sid; do
 done
 cp -a "$WORK/aptly/public/." "$OUTPUT/"
 cat > "$OUTPUT/index.html" <<'EOF'
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>XDDD APT CI fixture</title></head>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>XDDD APT archive (test signed)</title></head>
 <body><h1>XDDD APT build artifact</h1><p>Unpublished, test-signed CI output. Not a production repository.</p></body></html>
 EOF
 # Never export or archive a private key.
