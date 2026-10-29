@@ -141,7 +141,7 @@ def verify(site: Path, packages: Path) -> None:
             print(f'PASS: {suite}/{arch}: all {len(observed)} approved versions indexed')
     provenance_path = site / 'archive-provenance.json'
     provenance = json.loads(provenance_path.read_text())
-    if provenance.get('schema') != 1 or provenance.get('source_repository') != 'mwyau/netavark-backports':
+    if provenance.get('schema') != 1 or not provenance.get('source_repositories'):
         raise ValueError('Invalid source provenance')
     if not provenance.get('releases'):
         raise ValueError('Missing approved source release records')
@@ -155,12 +155,13 @@ def verify(site: Path, packages: Path) -> None:
     records = provenance.get('packages')
     if not isinstance(records, dict) or set(records) != set(expected_hashes):
         raise ValueError('Source provenance does not cover every indexed package')
-    approved_tags = {item['tag'] for item in provenance['releases']}
+    approved_ids = {f"{item['repository']}@{item['tag']}"
+                    for item in provenance['releases']}
     for name, sha in expected_hashes.items():
         entry = records[name]
-        if entry.get('sha256') != sha or not entry.get('release_tags'):
+        if entry.get('sha256') != sha or not entry.get('release_ids'):
             raise ValueError(f'Incorrect provenance checksum or release history: {name}')
-        if set(entry['release_tags']) - approved_tags:
+        if set(entry['release_ids']) - approved_ids:
             raise ValueError(f'Unrecognized source release in provenance: {name}')
     print(f'PASS: provenance covers {len(records)} verified Debian binaries')
     validate_apt_local(site, public, expected)
