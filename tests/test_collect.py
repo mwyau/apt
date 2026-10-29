@@ -46,7 +46,7 @@ class CollectorTests(unittest.TestCase):
         draft, _ = self.fake_release('netavark-20261031.1', manifest2, {}, draft=True)
         lookup = {**{a['browser_download_url']: blobs1[a['name']] for a in first['assets']},
                   **{a['browser_download_url']: blobs2[a['name']] for a in second['assets']}}
-        with tempfile.TemporaryDirectory() as temp, patch.object(collect, 'get_bytes', side_effect=lambda u, token: lookup[u]):
+        with tempfile.TemporaryDirectory() as temp, patch.object(collect, 'get_bytes', side_effect=lambda u, token='': lookup[u]):
             result = collect.collect([second, draft, first], Path(temp), {}, '')
             self.assertEqual(len(result['packages']), 12)
             for suite in collect.SUITES:
