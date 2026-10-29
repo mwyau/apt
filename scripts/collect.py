@@ -391,9 +391,15 @@ def main() -> None:
             if args.output.exists() and any(args.output.iterdir()):
                 raise CollectionError(f'Output directory must be empty: {args.output}')
             args.output.mkdir(parents=True, exist_ok=True)
+            selected = {
+                name: sha for name, sha in active.items()
+                if candidate['packages'].get(name) == sha
+            }
             for suite in SUITES:
                 for package in (stage / suite).glob('*.deb'):
-                    if package.name in active:
+                    # Discovery may encounter a same-filename hash change.
+                    # Never copy those unapproved bytes even for an active name.
+                    if package.name in selected:
                         target = args.output / suite / package.name
                         target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(package, target)
@@ -414,7 +420,7 @@ def main() -> None:
                     'hash_history': candidate['hash_history'][name],
                     'github_asset_uploaded_at': candidate['uploaded_at'][name],
                 }
-                for name, sha in active.items()
+                for name, sha in selected.items()
             },
         }
         args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
@@ -430,7 +436,7 @@ def main() -> None:
                 for name, sha in candidate['packages'].items()
             },
         }, indent=2, sort_keys=True) + '\n')
-        print(f'Collected {len(active)} enabled Debian packages '
+        print(f'Collected {len(selected)} verified, unchanged Debian packages '
               f'from {len(candidate["release_metadata"])} source releases')
     except (CollectionError, ValueError, KeyError, OSError, TypeError) as exc:
         sys.exit(f'ERROR: {exc}')
