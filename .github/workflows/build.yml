@@ -37,6 +37,7 @@ jobs:
           set -euo pipefail
           python3 scripts/collect.py --output .artifacts/packages \
             --lock archive/package-lock.json \
+            --require-locked \
             --candidate-lock .artifacts/package-lock.candidate.json \
             --manifest .artifacts/archive-provenance.json
 
