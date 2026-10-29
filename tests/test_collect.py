@@ -142,8 +142,10 @@ class CollectorTests(unittest.TestCase):
             collect.resolve_lock(discovered, {first: a}, {}, True)
         with self.assertRaisesRegex(collect.CollectionError, 'missing='):
             collect.resolve_lock({second: b}, discovered, {}, True)
-        with self.assertRaisesRegex(collect.CollectionError, 'modified='):
+        with self.assertRaisesRegex(collect.CollectionError, 'Disabled historical package changed'):
             collect.resolve_lock({first: 'f' * 64, second: b}, active, disabled, True)
+        with self.assertRaisesRegex(collect.CollectionError, 'modified='):
+            collect.resolve_lock({first: a, second: 'f' * 64}, active, disabled, True)
 
     def test_disabled_history_retained_in_one_lock(self):
         first = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
