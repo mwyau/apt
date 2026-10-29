@@ -14,7 +14,7 @@ requests, pushes to `main`, and manual dispatch. It:
 2. Downloads the release manifests and checksum lists, verifies their consistency,
    and selects only Debian Trixie, Forky and Sid `netavark` binaries for
    `amd64` and `arm64`.
-3. Checks historical package checksums against `archive-lock.json`, rejects
+3. Checks historical package checksums against `archive/package-lock.json`, rejects
    conflicting or disappearing packages, and retains every approved version
    for later downgrades.
 4. Uses **aptly** to generate the complete `dists/` and `pool/` tree,
@@ -48,12 +48,12 @@ signing subkey and complete a deployment review.
 ## Historical packages and checksum lock
 
 The first release's six Debian SHA-256 digests are recorded in
-[`archive-lock.json`](archive-lock.json). The lock is independent of editable
+[`archive/package-lock.json`](archive/package-lock.json). The lock is independent of editable
 GitHub Releases. If a previously approved package's bytes change, or a locked
 version disappears from release history, the build stops.
 
 When a new approved release adds packages, the build writes
-`archive-lock.candidate.json` to its Actions artifact. Review and commit the
+`package-lock.candidate.json` to its Actions artifact. Review and commit the
 updated hashes in a separate PR. This repository never silently changes the
 committed lock.
 
@@ -70,10 +70,10 @@ Requirements: Python 3, `aptly`, `gnupg`, `gpgv`, `dpkg-dev` and `apt-get`.
 python3 -m unittest discover -s tests -v
 python3 scripts/collect.py \
   --output .artifacts/packages \
-  --lock archive-lock.json \
-  --candidate-lock .artifacts/archive-lock.candidate.json \
+  --lock archive/package-lock.json \
+  --candidate-lock .artifacts/package-lock.candidate.json \
   --manifest .artifacts/archive-provenance.json
-bash scripts/build.sh .artifacts/packages .artifacts/site
+bash scripts/build/aptly.sh .artifacts/packages .artifacts/site
 cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
 python3 scripts/verify.py --site .artifacts/site --packages .artifacts/packages
 ```
