@@ -87,7 +87,7 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(set(normalized), set(binaries))
         self.assertEqual(checksums[next(iter(binaries))],
                          digest(binaries[next(iter(binaries))]))
-        release['assets'][-1]['digest'] = 'sha256:' + 'f' * 64
+        release['assets'][1]['digest'] = 'sha256:' + 'f' * 64
         with patch.object(collect, 'get_bytes',
                           side_effect=lambda u, token='': lookup[u]):
             with self.assertRaisesRegex(collect.CollectionError, 'digest conflict'):
