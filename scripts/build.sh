@@ -41,8 +41,12 @@ cat > "$OUTPUT/index.html" <<'EOF'
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>XDDD APT archive (test signed)</title></head>
 <body><h1>XDDD APT build artifact</h1><p>Unpublished, test-signed CI output. Not a production repository.</p></body></html>
 EOF
-# Never export or archive a private key.
-if find "$OUTPUT" -type f \( -name '*.key' -o -name 'private-keys-v1.d' \) | grep -q .; then
-  echo 'Refusing to archive a private key' >&2; exit 1
+# The private key lives only under WORK, never in the public tree.
+# Fail closed on unexpected key files or symlinks before broadening permissions.
+if find "$OUTPUT" \( -type l -o -name '*.key' -o -name '*.kbx' -o -name 'private-keys-v1.d' \) -print -quit | grep -q .; then
+  echo 'Refusing unsafe files or signing material in the public archive' >&2; exit 1
 fi
+# aptly honors umask; the archive must be readable by an unprivileged web server.
+find "$OUTPUT" -type d -exec chmod 0755 {} +
+find "$OUTPUT" -type f -exec chmod 0644 {} +
 printf 'Created signed archive in %s (TEST KEY ONLY)\n' "$OUTPUT"
