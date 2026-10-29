@@ -157,19 +157,53 @@ def verify_deb_control(path: Path, suite: str, arch: str, version: str) -> None:
             f'expected (netavark, {version}, {arch}), found {values!r}')
 
 
-def load_lock(path: Path) -> dict[str, str]:
-    data = json.loads(path.read_text())
-    if data.get('schema') != 1 or not isinstance(data.get('packages'), dict):
-        raise CollectionError('Invalid archive lock file')
-    locked = data['packages']
-    for name, sha in locked.items():
+def validate_package_hashes(packages: dict, label: str) -> None:
+    for name, sha in packages.items():
         if not isinstance(name, str) or not re.fullmatch(
                 r'netavark_[0-9][A-Za-z0-9.+:~-]*~(?:trixie|forky|sid)_(?:amd64|arm64)[.]deb',
                 name):
-            raise CollectionError(f'Invalid archive lock package name: {name!r}')
+            raise CollectionError(f'Invalid {label} package name: {name!r}')
         if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{64}', sha):
-            raise CollectionError(f'Invalid archive lock SHA-256 for {name}')
-    return locked
+            raise CollectionError(f'Invalid {label} SHA-256 for {name}')
+
+
+def load_lock_state(path: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Enabled binaries are published; disabled binaries cannot be rediscovered."""
+    data = json.loads(path.read_text())
+    if data.get('schema') != 2 or not isinstance(data.get('packages'), dict):
+        raise CollectionError('Invalid archive lock file (expected schema 2)')
+    active = data['packages']
+    disabled = data.get('disabled', {})
+    if not isinstance(disabled, dict):
+        raise CollectionError('Invalid disabled packages in archive lock')
+    validate_package_hashes(active, 'active')
+    validate_package_hashes(disabled, 'disabled')
+    overlap = set(active) & set(disabled)
+    if overlap:
+        raise CollectionError(f'Packages both enabled and disabled: {sorted(overlap)}')
+    return active, disabled
+
+
+def load_lock(path: Path) -> dict[str, str]:
+    """Return enabled entries for callers that only need the publication set."""
+    return load_lock_state(path)[0]
+
+
+def resolve_lock(discovered: dict[str, str], active: dict[str, str],
+                 disabled: dict[str, str], require_locked: bool) -> dict:
+    """Validate previously reviewed SHA-256 and propose only truly new binaries."""
+    ensure_locked_subset(discovered, active)
+    for name, sha in disabled.items():
+        if name in discovered and discovered[name] != sha:
+            raise CollectionError(f'Disabled historical package changed: {name}')
+    new = {name: sha for name, sha in discovered.items()
+           if name not in active and name not in disabled}
+    if require_locked and new:
+        raise CollectionError(f'Unreviewed new packages: {sorted(new)}. '
+                              'Merge a lockfile review PR first')
+    return {'schema': 2,
+            'packages': dict(sorted({**active, **new}.items())),
+            'disabled': dict(sorted(disabled.items()))}
 
 
 def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str, repo: str) -> dict:
@@ -284,16 +318,16 @@ def collect_sources(repositories: list[str], destination: Path,
             'uploaded_at': upload_dates}
 
 
-def ensure_locked(discovered: dict[str, str], locked: dict[str, str]) -> None:
-    """No new binary enters a build before its checksum was approved in Git."""
-    additions = sorted(set(discovered) - set(locked))
+def ensure_locked_subset(discovered: dict[str, str],
+                         locked: dict[str, str]) -> None:
+    """An approved binary must remain retrievable at its reviewed checksum."""
     missing = sorted(set(locked) - set(discovered))
     changed = sorted(name for name in set(locked) & set(discovered)
                      if discovered[name] != locked[name])
-    if additions or missing or changed:
+    if missing or changed:
         raise CollectionError(
-            f'Archive lock mismatch: new={additions}, missing={missing}, '
-            f'modified={changed}. Review and merge a package-lock PR first')
+            f'Archive lock mismatch: missing={missing}, modified={changed}')
+
 
 
 def main() -> None:
@@ -310,13 +344,19 @@ def main() -> None:
     token = os.getenv('GH_TOKEN', '')
     try:
         repositories = load_sources(args.sources)
-        lock = load_lock(args.lock)
-        candidate = collect_sources(repositories, args.output, lock, token)
-        if args.require_locked:
-            ensure_locked(candidate['packages'], lock)
+        active, disabled = load_lock_state(args.lock)
+        candidate = collect_sources(repositories, args.output, active, token)
+        proposed = resolve_lock(candidate['packages'], active, disabled,
+                                args.require_locked)
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
-        args.candidate_lock.write_text(
-            json.dumps({'schema': 1, 'packages': candidate['packages']}, indent=2) + '\n')
+        args.candidate_lock.write_text(json.dumps(proposed, indent=2) + '\n')
+        # Every archive is built exclusively from active, reviewed package bytes.
+        # Discovery can propose new binaries in the lockfile, but never publishes
+        # or archives unreviewed or deliberately disabled versions.
+        for suite in SUITES:
+            for package in (args.output / suite).glob('*.deb'):
+                if package.name not in active:
+                    package.unlink()
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest = {
             'schema': 1,
@@ -328,11 +368,11 @@ def main() -> None:
                     'release_ids': candidate['provenance'][name],
                     'github_asset_uploaded_at': candidate['uploaded_at'][name],
                 }
-                for name, sha in candidate['packages'].items()
+                for name, sha in active.items()
             },
         }
         args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
-        print(f'Collected {len(candidate["packages"])} locked Debian packages '
+        print(f'Collected {len(active)} enabled Debian packages '
               f'from {len(candidate["release_metadata"])} source releases')
     except (CollectionError, ValueError, KeyError, OSError, TypeError) as exc:
         sys.exit(f'ERROR: {exc}')
