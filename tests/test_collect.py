@@ -55,7 +55,7 @@ class CollectorTests(unittest.TestCase):
                 self.assertEqual(len(list((Path(temp) / suite).glob('*.deb'))), 4)
             self.assertEqual(result['releases'], ['netavark-20261029.1', 'netavark-20261030.1'])
             fname = next(iter(result['packages']))
-            with self.assertRaisesRegex(collect.CollectionError, 'changed since archive lock'):
+            with self.assertRaisesRegex(collect.CollectionError, 'modified='):
                 collect.collect([first], Path(temp), {fname: 'f' * 64}, '', 'mwyau/netavark-backports')
 
     def test_conflicting_filename_chooses_latest_dated_tag(self):
@@ -185,8 +185,10 @@ class CollectorTests(unittest.TestCase):
             collect.resolve_lock(discovered, {first: a}, {}, True)
         with self.assertRaisesRegex(collect.CollectionError, 'missing='):
             collect.resolve_lock({second: b}, discovered, {}, True)
-        with self.assertRaisesRegex(collect.CollectionError, 'Removed historical package changed'):
-            collect.resolve_lock({first: 'f' * 64, second: b}, active, removed, True)
+        # Removed versions are excluded even when upstream republishes the name.
+        excluded = collect.resolve_lock({first: 'f' * 64, second: b},
+                                        active, removed, True)
+        self.assertEqual(excluded['removed'][first], a)
         with self.assertRaisesRegex(collect.CollectionError, 'modified='):
             collect.resolve_lock({first: a, second: 'f' * 64}, active, removed, True)
 
