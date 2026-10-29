@@ -110,12 +110,33 @@ def validated_release(release: dict, token: str) -> tuple[dict, dict, dict]:
         raise CollectionError('versions.json checksum mismatch')
     manifest = json.loads(manifest_bytes)
     expected = debian_names(manifest)
-    if set(expected) - set(assets) or set(expected) - set(checksums):
-        raise CollectionError(f'{release["tag_name"]}: incomplete Debian asset snapshot')
-    # A complete snapshot may contain Ubuntu, RPM and source assets; only Debian binaries are downloaded.
-    if set(checksums) != (set(assets) - {'SHA256SUMS'}):
+
+    # GitHub normalizes certain characters in uploaded asset filenames.
+    # The original checksum manifest records canonical Debian names (e.g. ~trixie),
+    # while the GitHub asset may be named .trixie. Never weaken checksum validation.
+    checked_assets = {}
+    for canonical, checksum in checksums.items():
+        candidates = [name for name in (canonical, canonical.replace('~', '.')) if name in assets]
+        if len(set(candidates)) != 1:
+            raise CollectionError(f'{release["tag_name"]}: missing or ambiguous asset for {canonical}')
+        actual = candidates[0]
+        if actual in checked_assets:
+            raise CollectionError(f'{release["tag_name"]}: duplicate mapping for asset {actual}')
+        asset_digest = assets[actual].get('digest')
+        if asset_digest and asset_digest != 'sha256:' + checksum:
+            raise CollectionError(f'{release["tag_name"]}: GitHub asset digest conflict for {actual}')
+        checked_assets[actual] = canonical
+    if set(checked_assets) != (set(assets) - {'SHA256SUMS'}):
         raise CollectionError(f'{release["tag_name"]}: asset names differ from checksum manifest')
-    return expected, assets, checksums
+    if set(expected) - set(checksums):
+        raise CollectionError(f'{release["tag_name"]}: missing canonical Debian checksums')
+
+    # Normalize only the selected Debian asset references, retaining their
+    # checksum-manifest names as keys and the actual GitHub URLs as values.
+    normalized = {canonical: assets[actual] for actual, canonical in checked_assets.items()}
+    if set(expected) - set(normalized):
+        raise CollectionError(f'{release["tag_name"]}: incomplete Debian asset snapshot')
+    return expected, normalized, checksums
 
 
 def load_lock(path: Path) -> dict[str, str]:
