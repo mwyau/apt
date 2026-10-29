@@ -160,7 +160,15 @@ def load_lock(path: Path) -> dict[str, str]:
     data = json.loads(path.read_text())
     if data.get('schema') != 1 or not isinstance(data.get('packages'), dict):
         raise CollectionError('Invalid archive lock file')
-    return data['packages']
+    locked = data['packages']
+    for name, sha in locked.items():
+        if not isinstance(name, str) or not re.fullmatch(
+                r'netavark_[0-9][A-Za-z0-9.+:~\\-]*~(?:trixie|forky|sid)_(?:amd64|arm64)\\.deb',
+                name):
+            raise CollectionError(f'Invalid archive lock package name: {name!r}')
+        if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{64}', sha):
+            raise CollectionError(f'Invalid archive lock SHA-256 for {name}')
+    return locked
 
 
 def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str) -> dict:
