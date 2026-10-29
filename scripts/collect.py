@@ -163,7 +163,7 @@ def load_lock(path: Path) -> dict[str, str]:
     locked = data['packages']
     for name, sha in locked.items():
         if not isinstance(name, str) or not re.fullmatch(
-                r'netavark_[0-9][A-Za-z0-9.+:~\\-]*~(?:trixie|forky|sid)_(?:amd64|arm64)\\.deb',
+                r'netavark_[0-9][A-Za-z0-9.+:~-]*~(?:trixie|forky|sid)_(?:amd64|arm64)[.]deb',
                 name):
             raise CollectionError(f'Invalid archive lock package name: {name!r}')
         if not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{64}', sha):
