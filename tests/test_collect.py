@@ -60,7 +60,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_package_control_requires_exact_name_version_arch(self):
         with patch.object(collect.subprocess, 'check_output',
-                          return_value='netavark\n1.14.0-2xddd1~trixie\namd64\n'):
+                          return_value='Package: netavark\nVersion: 1.14.0-2xddd1~trixie\nArchitecture: amd64\n'):
             collect.verify_deb_control(Path('netavark.deb'), 'trixie', 'amd64',
                                        '1.14.0-2xddd1~trixie')
             with self.assertRaisesRegex(collect.CollectionError, 'Control metadata mismatch'):
