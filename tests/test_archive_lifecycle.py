@@ -162,7 +162,30 @@ class ArchiveLifecycleTests(unittest.TestCase):
         expected = verify.expected_packages(packages)
         self.assertTrue(all(len(expected[(suite, arch)]) == 2
                             for suite in collect.SUITES for arch in collect.ARCHES))
-        self.build_and_verify('multiversion', packages, manifest)
+        site = self.build_and_verify('multiversion', packages, manifest)
+        # Independent verification must detect corrupt provenance even if the
+        # signed package indexes themselves remain valid.
+        provenance_file = site / 'archive-provenance.json'
+        original_provenance = provenance_file.read_text()
+        broken = json.loads(original_provenance)
+        entry = next(iter(broken['packages'].values()))
+        entry['selected_release'] = 'example/netavark@netavark-19000101.1'
+        provenance_file.write_text(json.dumps(broken))
+        with self.assertRaisesRegex(ValueError, 'Invalid selected source release'):
+            verify.verify_provenance(site, expected)
+        provenance_file.write_text(original_provenance)
+        # Index completeness is checked independently of the signed manifest.
+        import gzip
+        index = site / 'dists' / 'trixie' / 'main' / 'binary-amd64' / 'Packages.gz'
+        original_index = index.read_bytes()
+        with gzip.open(index, 'rt') as stream:
+            stanzas = [s for s in stream.read().split('\n\n') if s.strip()]
+        self.assertEqual(len(stanzas), 2)
+        with gzip.open(index, 'wt') as stream:
+            stream.write(stanzas[0] + '\n\n')
+        with self.assertRaisesRegex(ValueError, 'missing indexed versions'):
+            verify.verify(site, packages)
+        index.write_bytes(original_index)
 
         removed_lock = self.write_lock('removed.json',
                                        {k: v for k, v in new_hashes.items()
