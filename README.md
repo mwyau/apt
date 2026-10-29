@@ -17,7 +17,7 @@ requests, pushes to `main`, and manual dispatch. It:
    `amd64` and `arm64`.
 3. Checks historical package checksums against `archive/package-lock.json`, rejects
    conflicting or disappearing packages, **and refuses unreviewed new binaries**.
-   Every approved version remains available for later downgrades.
+   Every enabled historical version remains available for later downgrades.
 4. Uses **aptly** to generate the complete `dists/` and `pool/` tree,
    signed `InRelease`, `Release`, `Release.gpg`, architecture package indexes
    and by-hash index files.
@@ -125,6 +125,22 @@ is currently required by the APT builder.
 
 The daily discovery job proposes only packages absent from **both** maps.
 Production publication remains a separate, future approval-gated operation.
+
+## Validation
+
+The CI build verifies the actual approved upstream Debian packages.
+Separate automated tests generate temporary local Debian packages solely to
+exercise the complete package lifecycle without publishing them. These cover
+two revisions across three suites and both architectures, signed APT indexes,
+`apt-get update`, removal, restoration, and locked-byte enforcement.
+
+Negative tests verify rejection of bad checksums, incorrect control metadata,
+missing indexed versions, altered release signatures, inconsistent source
+history, and conflicting filenames from multiple sources.
+
+The multi-version archive tests are based on temporary packages because only
+one distinct approved upstream version was available at the time of review.
+Scheduled discovery PR creation and public publication are not part of these tests.
 
 ## Local development
 
