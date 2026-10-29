@@ -13,8 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts import collect, verify
-from scripts.build import landing
+from scripts import collect, verify, landing
 
 
 REPOSITORY = 'example/netavark'
