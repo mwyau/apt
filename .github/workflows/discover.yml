@@ -1,0 +1,101 @@
+name: Check for new APT packages
+
+on:
+  schedule:
+    # Daily; GitHub schedules may run later than the requested time.
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apt-package-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Install Debian package metadata tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev
+
+      - name: Discover and verify published source releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/collect.py \
+            --sources archive/sources.json \
+            --output .artifacts/packages \
+            --lock archive/package-lock.json \
+            --candidate-lock .artifacts/package-lock.candidate.json \
+            --manifest .artifacts/archive-provenance.json
+
+      - name: Open package lock review PR only when new binaries exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate=".artifacts/package-lock.candidate.json"
+          current="archive/package-lock.json"
+
+          if cmp -s "$current" "$candidate"; then
+            echo "No new package hashes to approve."
+            exit 0
+          fi
+
+          # Avoid competing automatic PRs. Later releases are considered after the
+          # previous lock update has been reviewed and merged or closed.
+          existing="$(gh pr list --state open --limit 100 \
+            --json headRefName --jq '.[] | select(.headRefName | startswith("automation/package-lock-")) | .headRefName')"
+          if [[ -n "$existing" ]]; then
+            echo "An automatic package-lock PR is already open: $existing"
+            exit 0
+          fi
+
+          digest="$(sha256sum "$candidate" | cut -d' ' -f1)"
+          branch="automation/package-lock-${digest:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Candidate already proposed on branch $branch. No duplicate PR."
+            exit 0
+          fi
+
+          python3 - <<'PY' > "$RUNNER_TEMP/package-update.md"
+          import json
+          from pathlib import Path
+          old = json.loads(Path('archive/package-lock.json').read_text())['packages']
+          new = json.loads(Path('.artifacts/package-lock.candidate.json').read_text())['packages']
+          additions = sorted(set(new) - set(old))
+          assert additions and all(old[k] == new[k] for k in old)
+          print('## New published Debian packages')
+          print()
+          print('The daily discovery job verified upstream GitHub Releases, their')
+          print('SHA256SUMS, the actual downloaded .deb bytes, and Debian control metadata.')
+          print('No package has been published or signed for production.')
+          print()
+          for name in additions:
+              print(f'- `{name}`: `{new[name]}`')
+          print()
+          print('Review the release changes and checksums before merging this PR.')
+          print('Merging approves these exact binary hashes for subsequent archive builds.')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          cp "$candidate" "$current"
+          git add "$current"
+          git commit -m "chore(archive): lock new Debian release binaries"
+          git push origin "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(archive): approve newly published Debian packages" \
+            --body-file "$RUNNER_TEMP/package-update.md"
