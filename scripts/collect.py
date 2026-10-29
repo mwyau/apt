@@ -191,44 +191,71 @@ def load_lock(path: Path) -> dict[str, str]:
 
 def resolve_lock(discovered: dict[str, str], active: dict[str, str],
                  removed: dict[str, str], require_locked: bool) -> dict:
-    """Validate previously reviewed SHA-256 and propose only truly new binaries."""
-    ensure_locked_subset(discovered, active)
-    for name, sha in removed.items():
-        if name in discovered and discovered[name] != sha:
-            raise CollectionError(f'Removed historical package changed: {name}')
-    new = {name: sha for name, sha in discovered.items()
-           if name not in active and name not in removed}
-    if require_locked and new:
-        raise CollectionError(f'Unreviewed new packages: {sorted(new)}. '
-                              'Merge a lockfile review PR first')
+    """Newest dated release is a proposal; only reviewed hashes may be published."""
+    # Removed entries are tombstones: they suppress rediscovery even if upstream
+    # later republishes the same filename with different contents.
+    if require_locked:
+        ensure_locked_subset(discovered, active)
+    proposed = dict(active)
+    changes = {}
+    for name, sha in discovered.items():
+        if name in removed:
+            continue
+        if name in active and active[name] != sha:
+            changes[name] = (active[name], sha)
+            if not require_locked:
+                proposed[name] = sha
+        elif name not in active:
+            proposed[name] = sha
+    additions = sorted(set(proposed) - set(active))
+    if require_locked and additions:
+        raise CollectionError(f'Unreviewed new packages: {additions}. '
+                              'Merge a package-lock review PR first')
+    # In discovery mode, changed hashes are proposed via a normal PR and must
+    # be reviewed; the production/locked mode fails above without publishing.
     return {'schema': 2,
-            'packages': dict(sorted({**active, **new}.items())),
+            'packages': dict(sorted(proposed.items())),
             'removed': dict(sorted(removed.items()))}
 
 
-def collect(releases: list[dict], destination: Path, lock: dict[str, str], token: str, repo: str) -> dict:
+
+def release_order(tag: str) -> tuple[int, int]:
+    """Compare the YYYYMMDD and numeric run revision, not lexicographic tags."""
+    match = TAG.fullmatch(tag)
+    if not match:
+        raise CollectionError(f'Invalid dated release tag: {tag!r}')
+    day, revision = tag.removeprefix('netavark-').split('.')
+    return int(day), int(revision)
+
+
+def collect(releases: list[dict], destination: Path, lock: dict[str, str],
+            token: str, repo: str) -> dict:
     approved = sorted((r for r in releases if TAG.fullmatch(r.get('tag_name', ''))
                        and not r.get('draft') and not r.get('prerelease')),
-                      key=lambda r: (int(r['tag_name'][9:17]), int(r['tag_name'].split('.')[-1])))
+                      key=lambda r: release_order(r['tag_name']))
     if not approved:
         raise CollectionError('No approved published netavark-* Releases; do not use CI drafts')
     destination.mkdir(parents=True, exist_ok=True)
     observed: dict[str, str] = {}
     provenance: dict[str, list[str]] = {}
     upload_dates: dict[str, str | None] = {}
+    selected_tags: dict[str, str] = {}
+    hash_history: dict[str, list[dict[str, str]]] = {}
     for release in approved:
+        tag = release['tag_name']
         names, assets, sums = validated_release(release, token, repo)
         for name, (suite, arch, version) in sorted(names.items()):
             digest = sums[name]
-            if name in observed:
-                if observed[name] != digest:
-                    raise CollectionError(f'Conflicting bytes for historical package {name}')
-                provenance[name].append(release['tag_name'])
+            history = hash_history.setdefault(name, [])
+            history.append({'release_tag': tag, 'sha256': digest})
+            if name in observed and observed[name] == digest:
+                provenance[name].append(tag)
+                selected_tags[name] = tag
                 continue
-            if name in lock and lock[name] != digest:
-                raise CollectionError(f'Historical artifact changed since archive lock: {name}')
+            # The same filename can be carried forward with modified bytes.
+            # Process releases oldest-to-newest: the newest dated tag wins as
+            # a candidate, but the committed lock still gates publishing.
             item = assets[name]
-            # The release data is reviewed independently; never trust filenames without hash verification.
             url = item['browser_download_url']
             parsed = urlparse(url)
             if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{repo}/releases/download/'):
@@ -242,18 +269,19 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
             destination_file.write_bytes(contents)
             verify_deb_control(destination_file, suite, arch, version)
             observed[name] = digest
-            provenance[name] = [release['tag_name']]
+            provenance[name] = [tag]
+            selected_tags[name] = tag
             upload_dates[name] = item.get('created_at')
-    missing = set(lock) - set(observed)
-    if missing:
-        raise CollectionError(f'Previously locked packages disappeared: {sorted(missing)}')
+    ensure_locked_subset(observed, lock)
     return {'schema': 1, 'repository': repo, 'packages': dict(sorted(observed.items())),
-            'releases': [r['tag_name'] for r in approved], 'provenance': provenance,
-            'uploaded_at': upload_dates,
+            'releases': [r['tag_name'] for r in approved],
+            'provenance': provenance, 'uploaded_at': upload_dates,
+            'selected_tags': selected_tags, 'hash_history': hash_history,
             'release_metadata': [
                 {'tag': r['tag_name'], 'published_at': r.get('published_at'),
                  'source_commit': r.get('target_commitish')}
                 for r in approved]}
+
 
 
 def load_sources(path: Path) -> list[str]:
@@ -287,6 +315,8 @@ def collect_sources(repositories: list[str], destination: Path,
     all_packages: dict[str, str] = {}
     all_releases: list[dict] = []
     all_provenance: dict[str, list[str]] = {}
+    all_hash_history: dict[str, list[dict[str, str]]] = {}
+    selected_sources: dict[str, str] = {}
     upload_dates: dict[str, str | None] = {}
     with tempfile.TemporaryDirectory() as work:
         for index, repo in enumerate(repositories):
@@ -308,6 +338,12 @@ def collect_sources(repositories: list[str], destination: Path,
                 all_provenance[name] = [f"{repo}@{tag}"
                                         for tag in candidate['provenance'][name]]
                 upload_dates[name] = candidate['uploaded_at'][name]
+                selected_sources[name] = f"{repo}@{candidate['selected_tags'][name]}"
+                all_hash_history[name] = [
+                    {'release_id': f"{repo}@{row['release_tag']}",
+                     'sha256': row['sha256']}
+                    for row in candidate['hash_history'][name]
+                ]
             for release in candidate['release_metadata']:
                 all_releases.append({'repository': repo, **release})
     for name, expected_sha in lock.items():
@@ -317,6 +353,7 @@ def collect_sources(repositories: list[str], destination: Path,
             raise CollectionError(f'Historical artifact changed since archive lock: {name}')
     return {'schema': 1, 'packages': dict(sorted(all_packages.items())),
             'release_metadata': all_releases, 'provenance': all_provenance,
+            'selected_sources': selected_sources, 'hash_history': all_hash_history,
             'uploaded_at': upload_dates}
 
 
@@ -368,6 +405,8 @@ def main() -> None:
                 name: {
                     'sha256': sha,
                     'release_ids': candidate['provenance'][name],
+                    'selected_release': candidate['selected_sources'][name],
+                    'hash_history': candidate['hash_history'][name],
                     'github_asset_uploaded_at': candidate['uploaded_at'][name],
                 }
                 for name, sha in active.items()
