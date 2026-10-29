@@ -82,21 +82,51 @@ jobs:
           python3 - <<'PY' > "$RUNNER_TEMP/package-update.md"
           import json
           from pathlib import Path
+
           old = json.loads(Path('archive/package-lock.json').read_text())['packages']
-          new = json.loads(Path('.artifacts/package-lock.candidate.json').read_text())['packages']
+          proposed = json.loads(Path('.artifacts/package-lock.candidate.json').read_text())
+          new = proposed['packages']
+          evidence = json.loads(Path('.artifacts/package-discovery.json').read_text())['packages']
+
           additions = sorted(set(new) - set(old))
-          assert additions and all(old[k] == new[k] for k in old)
-          print('## New published Debian packages')
+          changes = sorted(k for k in set(old) & set(new) if old[k] != new[k])
+          assert additions or changes, 'Unexpected lockfile change without new or modified binaries'
+          assert set(old) <= set(new), 'Discovery must never delete an enabled package'
+
+          print('## Published Debian package discovery')
           print()
-          print('The daily discovery job verified upstream GitHub Releases, their')
-          print('SHA256SUMS, the actual downloaded .deb bytes, and Debian control metadata.')
-          print('No package has been published or signed for production.')
+          print('The daily checker verified upstream release checksums and Debian')
+          print('control fields. **This PR does not publish packages.**')
+          print('Review all proposed hashes before merging.')
           print()
-          for name in additions:
-              print(f'- `{name}`: `{new[name]}`')
+          if additions:
+              print('### New package versions')
+              for name in additions:
+                  entry = evidence[name]
+                  print(f"- `{name}`")
+                  print(f"  - SHA-256: `{entry['sha256']}`")
+                  print(f"  - Selected release: `{entry['selected_release']}`")
+              print()
+          if changes:
+              print('### IMPORTANT: same Debian version, different binary bytes')
+              print()
+              print('A later dated release contains the same package filename with')
+              print('different bytes. **Publishing a new Debian revision is strongly')
+              print('preferred** to replacing an existing version, because APT')
+              print('clients may already have the older bytes cached.')
+              print('No replacement is allowed until this PR is reviewed and merged.')
+              for name in changes:
+                  entry = evidence[name]
+                  print(f"- `{name}`")
+                  print(f"  - Previously approved SHA-256: `{old[name]}`")
+                  print(f"  - Proposed SHA-256: `{new[name]}`")
+                  print(f"  - Latest dated source: `{entry['selected_release']}`")
+                  print('  - Historical release hashes:')
+                  for item in entry['hash_history']:
+                      print(f"    - `{item['release_id']}`: `{item['sha256']}`")
           print()
-          print('Review the release changes and checksums before merging this PR.')
-          print('Merging approves these exact binary hashes for subsequent archive builds.')
+          print('The review gate is `archive/package-lock.json`. The archive')
+          print('build rejects unapproved binary bytes.')
           PY
 
           git config user.name "github-actions[bot]"
