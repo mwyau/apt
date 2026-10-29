@@ -198,7 +198,9 @@ class ArchiveLifecycleTests(unittest.TestCase):
         packages, candidate, _manifest = self.run_collector(
             'conflict-proposed', lock, require_locked=False)
         self.assertEqual(candidate['packages'][target], sha256(changed_data))
-        self.assertEqual(len(list(packages.rglob('*.deb'))), 6)
+        self.assertEqual(len(list(packages.rglob('*.deb'))), 5)
+        self.assertFalse(any(path.name == target for path in packages.rglob('*.deb')),
+                         'An unreviewed same-name replacement must never reach output')
         evidence = json.loads(
             (self.root / 'conflict-proposed' / 'package-discovery.json').read_text()
         )['packages'][target]
