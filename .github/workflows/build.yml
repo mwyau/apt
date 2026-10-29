@@ -24,8 +24,12 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.mode) || '["fixture","releases"]') }}
     env:
-      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'fixture' }}
+      MODE: ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v4
         with:
