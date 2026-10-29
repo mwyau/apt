@@ -70,7 +70,7 @@ def validate_apt_local(site: Path, public: Path, expected: dict) -> None:
             (lists / 'partial').mkdir(parents=True)
             sources = root / 'sources.list'
             sources.write_text(
-                f'deb [signed-by={public.resolve()}] file:{site.resolve()} {suite} main\\n')
+                f'deb [signed-by={public.resolve()}] file:{site.resolve()} {suite} main\n')
             common = [
                 '-o', f'Dir::Etc::sourcelist={sources}',
                 '-o', 'Dir::Etc::sourceparts=-',
