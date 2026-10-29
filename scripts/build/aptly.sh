@@ -42,10 +42,8 @@ for suite in trixie forky sid; do
 done
 # Resolve aptly's internal links so the exported archive is fully self-contained.
 cp -aL "$WORK/aptly/public/." "$OUTPUT/"
-cat > "$OUTPUT/index.html" <<'EOF'
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>XDDD APT archive (test signed)</title></head>
-<body><h1>XDDD APT build artifact</h1><p>Unpublished, test-signed CI output. Not a production repository.</p></body></html>
-EOF
+# The landing page is generated from the published package indexes after
+# provenance metadata has been copied to the site.
 # The private key lives only under WORK, never in the public tree.
 # Fail closed on unexpected key files or symlinks before broadening permissions.
 if find "$OUTPUT" \( -type l -o -name '*.key' -o -name '*.kbx' -o -name 'private-keys-v1.d' \) -print -quit | grep -q .; then
