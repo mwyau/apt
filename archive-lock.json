@@ -1,4 +1,11 @@
 {
   "schema": 1,
-  "packages": {}
+  "packages": {
+    "netavark_1.14.0-2xddd1~trixie_amd64.deb": "9c468720c32b0634123c77245b0d04fb61abdc581e18b587dac85bd9d05d8a08",
+    "netavark_1.14.0-2xddd1~trixie_arm64.deb": "114057954b9571a790dddcbda4f02bc5f75efb76065ee8d4f2256df742dae8d7",
+    "netavark_1.17.2-3xddd1~forky_amd64.deb": "54eb8f7591f43007fbfb9896f0f24e7c500a888cde17434753166ec2a11462ca",
+    "netavark_1.17.2-3xddd1~forky_arm64.deb": "6a3f96479436f4a89f420222f60a0ef3eee9c7ddd5e4ea270ebac53408fb1365",
+    "netavark_1.17.2-3xddd1~sid_amd64.deb": "4dd337bfbfb0cdc86c7f2850682e25470c82e7441c05d3e8b306f99cd22772a1",
+    "netavark_1.17.2-3xddd1~sid_arm64.deb": "e68cd2bbe2dce3ef4f1ceb26f6675309090b29de4e9d07d316629185c5330b33"
+  }
 }
