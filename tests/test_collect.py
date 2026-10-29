@@ -140,14 +140,18 @@ class CollectorTests(unittest.TestCase):
         good = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'package-lock.json'
-            path.write_text(json.dumps({'schema': 2, 'packages': {good: 'a' * 64}}))
+            path.write_text(json.dumps({'schema': 2, 'packages': {good: 'a' * 64}, 'removed': {}}))
             self.assertEqual(collect.load_lock(path)[good], 'a' * 64)
-            path.write_text(json.dumps({'schema': 2, 'packages': {good: 'not-a-sha'}}))
+            path.write_text(json.dumps({'schema': 2, 'packages': {good: 'not-a-sha'}, 'removed': {}}))
             with self.assertRaisesRegex(collect.CollectionError, 'SHA-256'):
                 collect.load_lock(path)
             path.write_text(json.dumps({'schema': 2, 'packages': {
-                '../wrong.deb': 'a' * 64}}))
+                '../wrong.deb': 'a' * 64}, 'removed': {}}))
             with self.assertRaisesRegex(collect.CollectionError, 'package name'):
+                collect.load_lock(path)
+            path.write_text(json.dumps({'schema': 2, 'packages': {good: 'a' * 64},
+                                        'remvoed': {}}))
+            with self.assertRaisesRegex(collect.CollectionError, 'requires exactly'):
                 collect.load_lock(path)
 
     def test_source_configuration(self):
