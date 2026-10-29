@@ -149,7 +149,8 @@ def verify_deb_control(path: Path, suite: str, arch: str, version: str) -> None:
         ).splitlines()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise CollectionError(f'Invalid Debian package: {path.name}') from exc
-    if values != ['netavark', version, arch]:
+    expected = [f'Package: netavark', f'Version: {version}', f'Architecture: {arch}']
+    if values != expected:
         raise CollectionError(
             f'Control metadata mismatch for {suite}/{path.name}: '
             f'expected (netavark, {version}, {arch}), found {values!r}')
