@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>XDDD APT repository — Debian packages</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif;
+         line-height: 1.55; color: #252329; background: #fff; }
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 860px; padding: 2rem 1.3rem 3rem; }
+header { border-bottom: 3px solid #d70a53; padding-bottom: 1rem; }
+h1 { font-size: 1.9rem; letter-spacing: -.03em; margin: .2rem 0; }
+h2 { font-size: 1.25rem; margin-top: 2rem; }
+p { max-width: 75ch; }
+a { color: #ac0641; text-underline-offset: 2px; }
+a:hover { color: #72002a; }
+.notice { background: #fff4f7; border-left: 4px solid #d70a53;
+           padding: .75rem 1rem; margin: 1.4rem 0; }
+.notice p { margin: .2rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { text-align: left; padding: .7rem .5rem; vertical-align: top;
+          border-bottom: 1px solid #e4e1e3; }
+thead { background: #f6f5f5; }
+th { font-weight: 650; }
+.summary { display: block; font-weight: 400; margin-top: .15rem; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .88em; }
+code { overflow-wrap: anywhere; }
+pre { padding: 1rem; border: 1px solid #e4e1e3; background: #f8f8f8;
+       border-radius: 3px; overflow-x: auto; white-space: pre; line-height: 1.5; }
+pre code { overflow-wrap: normal; }
+details summary { cursor: pointer; color: #51444b; font-size: .85rem; }
+details p { margin: .25rem 0 0; }
+.small, footer { font-size: .88rem; color: #5d565c; }
+footer { border-top: 1px solid #e4e1e3; margin-top: 2.2rem; padding-top: .8rem; }
+</style>
+</head>
+<body>
+<header>
+<h1>XDDD APT repository</h1>
+<p>Unofficial Debian packages, distributed as a signed APT archive.</p>
+</header>
+<div class="notice" role="note">
+<strong>CI preview — not a public repository.</strong>
+<p>This build is signed with a short-lived test key. Do not add it to a
+system or install packages from it. The commands below are for a future,
+separately approved production release.</p>
+</div>
+<section aria-labelledby="packages">
+<h2 id="packages">Available packages</h2>
+<table>
+<thead><tr><th scope="col">Package</th><th scope="col">Debian suite</th>
+<th scope="col">Latest version</th><th scope="col">Architectures</th></tr></thead>
+<tbody>
+$ROWS
+</tbody>
+</table>
+<p class="small">Older approved versions remain indexed for manual downgrades.
+Suites are codenames, not rolling <code>stable</code> or <code>testing</code> aliases.
+This archive is not affiliated with the Debian project.</p>
+</section>
+<section aria-labelledby="setup">
+<h2 id="setup">Adding the repository (when published)</h2>
+<p>For Debian <code>$SUITE</code> on AMD64 or ARM64. Use the matching
+suite from the table for other Debian versions. Before trusting a
+third-party repository, verify its permanent signing key fingerprint
+through an independent channel.</p>
+<p><strong>1.</strong> Install the production archive key into
+<code>/etc/apt/keyrings/</code>:</p>
+<pre><code>$KEY_COMMAND</code></pre>
+<p><strong>2.</strong> Add a deb822 source file with a scoped
+<code>Signed-By</code> key (no <code>apt-key</code>):</p>
+<pre><code>$SOURCES_COMMAND</code></pre>
+<p><strong>3.</strong> Refresh APT and explicitly select the archive version:</p>
+<pre><code>$INSTALL_COMMAND</code></pre>
+<p class="small">Only binary packages are provided; no <code>deb-src</code> index.
+The repository uses backports-style APT priorities, so installation of an
+archive version should be requested explicitly.</p>
+</section>
+<footer>
+<p>Sources: $SOURCES. <a href="archive-provenance.json">Archive provenance</a>
+· <a href="dists/$SUITE/InRelease">Signed release metadata</a>
+· <a href="xddd-archive-keyring.gpg">Archive public key (test only)</a>
+· <a href="https://github.com/mwyau/apt">Repository builder</a>.</p>
+</footer>
+</body>
+</html>

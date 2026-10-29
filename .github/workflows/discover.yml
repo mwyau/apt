@@ -1,0 +1,141 @@
+name: Check for new APT packages
+
+on:
+  schedule:
+    # Daily; GitHub schedules may run later than the requested time.
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apt-package-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Install Debian package metadata tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev
+
+      - name: Discover and verify published source releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/collect.py \
+            --sources archive/sources.json \
+            --output .artifacts/packages \
+            --lock archive/package-lock.json \
+            --candidate-lock .artifacts/package-lock.candidate.json \
+            --manifest .artifacts/archive-provenance.json
+
+      - name: Open package lock review PR only when new binaries exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate=".artifacts/package-lock.candidate.json"
+          current="archive/package-lock.json"
+
+          # Compare parsed JSON, not formatting or key order. This is crucial
+          # when package-lock.json has been manually edited to disable a version.
+          if python3 - "$current" "$candidate" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          previous = json.loads(Path(sys.argv[1]).read_text())
+          proposed = json.loads(Path(sys.argv[2]).read_text())
+          sys.exit(0 if previous == proposed else 1)
+          PY
+          then
+            echo "No new package hashes to approve."
+            exit 0
+          fi
+
+          # Avoid competing automatic PRs. Later releases are considered after the
+          # previous lock update has been reviewed and merged or closed.
+          existing="$(gh pr list --state open --limit 100 \
+            --json headRefName --jq '.[] | select(.headRefName | startswith("automation/package-lock-")) | .headRefName')"
+          if [[ -n "$existing" ]]; then
+            echo "An automatic package-lock PR is already open: $existing"
+            exit 0
+          fi
+
+          digest="$(sha256sum "$candidate" | cut -d' ' -f1)"
+          branch="automation/package-lock-${digest:0:12}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Candidate already proposed on branch $branch. No duplicate PR."
+            exit 0
+          fi
+
+          python3 - <<'PY' > "$RUNNER_TEMP/package-update.md"
+          import json
+          from pathlib import Path
+
+          old = json.loads(Path('archive/package-lock.json').read_text())['packages']
+          proposed = json.loads(Path('.artifacts/package-lock.candidate.json').read_text())
+          new = proposed['packages']
+          evidence = json.loads(Path('.artifacts/package-discovery.json').read_text())['packages']
+
+          additions = sorted(set(new) - set(old))
+          changes = sorted(k for k in set(old) & set(new) if old[k] != new[k])
+          assert additions or changes, 'Unexpected lockfile change without new or modified binaries'
+          assert set(old) <= set(new), 'Discovery must never delete an enabled package'
+
+          print('## Published Debian package discovery')
+          print()
+          print('The daily checker verified upstream release checksums and Debian')
+          print('control fields. **This PR does not publish packages.**')
+          print('Review all proposed hashes before merging.')
+          print()
+          if additions:
+              print('### New package versions')
+              for name in additions:
+                  entry = evidence[name]
+                  print(f"- `{name}`")
+                  print(f"  - SHA-256: `{entry['sha256']}`")
+                  print(f"  - Selected release: `{entry['selected_release']}`")
+              print()
+          if changes:
+              print('### IMPORTANT: same Debian version, different binary bytes')
+              print()
+              print('A later dated release contains the same package filename with')
+              print('different bytes. **Publishing a new Debian revision is strongly')
+              print('preferred** to replacing an existing version, because APT')
+              print('clients may already have the older bytes cached.')
+              print('No replacement is allowed until this PR is reviewed and merged.')
+              for name in changes:
+                  entry = evidence[name]
+                  print(f"- `{name}`")
+                  print(f"  - Previously approved SHA-256: `{old[name]}`")
+                  print(f"  - Proposed SHA-256: `{new[name]}`")
+                  print(f"  - Latest dated source: `{entry['selected_release']}`")
+                  print('  - Historical release hashes:')
+                  for item in entry['hash_history']:
+                      print(f"    - `{item['release_id']}`: `{item['sha256']}`")
+          print()
+          print('The review gate is `archive/package-lock.json`. The archive')
+          print('build rejects unapproved binary bytes.')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          cp "$candidate" "$current"
+          git add "$current"
+          git commit -m "chore(archive): lock new Debian release binaries"
+          git push origin "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(archive): approve newly published Debian packages" \
+            --body-file "$RUNNER_TEMP/package-update.md"
