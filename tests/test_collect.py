@@ -96,7 +96,7 @@ class CollectorTests(unittest.TestCase):
     def test_archive_lock_rejects_bad_names_and_digests(self):
         good = 'netavark_1.14.0-2xddd1~trixie_amd64.deb'
         with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / 'archive-lock.json'
+            path = Path(temp) / 'package-lock.json'
             path.write_text(json.dumps({'schema': 1, 'packages': {good: 'a' * 64}}))
             self.assertEqual(collect.load_lock(path)[good], 'a' * 64)
             path.write_text(json.dumps({'schema': 1, 'packages': {good: 'not-a-sha'}}))
