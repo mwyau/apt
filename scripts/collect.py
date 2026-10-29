@@ -172,6 +172,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
     destination.mkdir(parents=True, exist_ok=True)
     observed: dict[str, str] = {}
     provenance: dict[str, list[str]] = {}
+    upload_dates: dict[str, str | None] = {}
     for release in approved:
         names, assets, sums = validated_release(release, token)
         for name, (suite, arch, version) in sorted(names.items()):
@@ -199,11 +200,17 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
             verify_deb_control(destination_file, suite, arch, version)
             observed[name] = digest
             provenance[name] = [release['tag_name']]
+            upload_dates[name] = item.get('created_at')
     missing = set(lock) - set(observed)
     if missing:
         raise CollectionError(f'Previously locked packages disappeared: {sorted(missing)}')
     return {'schema': 1, 'packages': dict(sorted(observed.items())),
-            'releases': [r['tag_name'] for r in approved], 'provenance': provenance}
+            'releases': [r['tag_name'] for r in approved], 'provenance': provenance,
+            'uploaded_at': upload_dates,
+            'release_metadata': [
+                {'tag': r['tag_name'], 'published_at': r.get('published_at'),
+                 'source_commit': r.get('target_commitish')}
+                for r in approved]}
 
 
 def main() -> None:
@@ -212,6 +219,7 @@ def main() -> None:
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--lock', type=Path, default=Path('archive-lock.json'))
     parser.add_argument('--candidate-lock', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path, required=True)
     args = parser.parse_args()
     import os
     token = os.getenv('GH_TOKEN', '')
@@ -219,6 +227,21 @@ def main() -> None:
         candidate = collect(list_releases(args.repo, token), args.output, load_lock(args.lock), token)
         args.candidate_lock.parent.mkdir(parents=True, exist_ok=True)
         args.candidate_lock.write_text(json.dumps({'schema': 1, 'packages': candidate['packages']}, indent=2) + '\n')
+        args.manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            'schema': 1,
+            'source_repository': REPO,
+            'releases': candidate['release_metadata'],
+            'packages': {
+                name: {
+                    'sha256': sha,
+                    'release_tags': candidate['provenance'][name],
+                    'github_asset_uploaded_at': candidate['uploaded_at'][name],
+                }
+                for name, sha in candidate['packages'].items()
+            },
+        }
+        args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
         print(f'Collected {len(candidate["packages"])} distinct Debian packages from {len(candidate["releases"])} published releases')
     except (CollectionError, ValueError, KeyError, OSError) as exc:
         sys.exit(f'ERROR: {exc}')
