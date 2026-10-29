@@ -28,9 +28,14 @@ def control(path: Path) -> tuple[str, str, str]:
         ['dpkg-deb', '--field', str(path), 'Package', 'Version', 'Architecture'],
         text=True, stderr=subprocess.PIPE,
     ).splitlines()
+    expected_keys = ('Package', 'Version', 'Architecture')
     if len(lines) != 3:
         raise ValueError(f'Invalid Debian package control fields: {path.name}')
-    return tuple(lines)
+    pairs = [line.partition(': ') for line in lines]
+    if any(sep != ': ' or key != expected for (key, sep, _value), expected
+           in zip(pairs, expected_keys)):
+        raise ValueError(f'Unexpected Debian control fields: {path.name}')
+    return tuple(value for _key, _sep, value in pairs)
 
 
 def expected_packages(packages: Path) -> dict[tuple[str, str], set[tuple[str, str, str, str]]]:
