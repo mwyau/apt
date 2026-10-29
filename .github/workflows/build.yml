@@ -36,12 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/collect.py --output .artifacts/packages \
-            --lock archive-lock.json \
-            --candidate-lock .artifacts/archive-lock.candidate.json \
+            --lock archive/package-lock.json \
+            --candidate-lock .artifacts/package-lock.candidate.json \
             --manifest .artifacts/archive-provenance.json
 
       - name: Build signed APT archive using temporary test-only GPG key
-        run: bash scripts/build.sh .artifacts/packages .artifacts/site
+        run: bash scripts/build/aptly.sh .artifacts/packages .artifacts/site
 
       - name: Include verified source provenance
         run: cp .artifacts/archive-provenance.json .artifacts/site/archive-provenance.json
@@ -68,6 +68,6 @@ jobs:
           path: |
             .artifacts/apt-site.tar.gz
             .artifacts/apt-site.tar.gz.sha256
-            .artifacts/archive-lock.candidate.json
+            .artifacts/package-lock.candidate.json
           if-no-files-found: error
           retention-days: 7
