@@ -102,7 +102,7 @@ def validated_release(release: dict, token: str) -> tuple[dict, dict, dict]:
         parsed = urlparse(url)
         if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{REPO}/releases/download/'):
             raise CollectionError(f'Unexpected asset download URL for {name}')
-        return get_bytes(url, token)
+        return get_bytes(url)
 
     checksums = checksums_from_bytes(download('SHA256SUMS'))
     manifest_bytes = download('versions.json')
@@ -172,7 +172,7 @@ def collect(releases: list[dict], destination: Path, lock: dict[str, str], token
             parsed = urlparse(url)
             if parsed.scheme != 'https' or parsed.hostname != 'github.com' or not parsed.path.startswith(f'/{REPO}/releases/download/'):
                 raise CollectionError(f'Unexpected package URL: {name}')
-            contents = get_bytes(url, token)
+            contents = get_bytes(url)
             if hashlib.sha256(contents).hexdigest() != digest:
                 raise CollectionError(f'Package SHA256 mismatch: {name}')
             folder = destination / suite
