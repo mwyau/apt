@@ -4,6 +4,10 @@ set -Eeuo pipefail
 if [[ $# != 2 ]]; then echo 'Usage: scripts/build/aptly.sh PACKAGES_DIR OUTPUT_DIR' >&2; exit 2; fi
 PACKAGES="$(realpath "$1")"
 OUTPUT="$(realpath -m "$2")"
+if [[ -e "$OUTPUT" ]] && [[ -n "$(find "$OUTPUT" -mindepth 1 -print -quit)" ]]; then
+  echo "Refusing nonempty archive output directory: $OUTPUT" >&2
+  exit 1
+fi
 WORK="$(mktemp -d)"
 umask 077
 export GNUPGHOME="$WORK/gnupg"
